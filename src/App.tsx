@@ -24,11 +24,10 @@ import {
   deleteMedicion,
   fetchAlimentos,
   fetchMediciones,
-  getEstablishmentProfile,
   insertMedicion,
   isSupabaseConfigured,
+  restoreSession,
   signOutEstablishment,
-  supabase,
 } from './lib/supabase';
 import type {
   BluetoothConnectionState,
@@ -157,7 +156,7 @@ export default function App() {
     [loadLocalHistory, saveLocalHistory],
   );
 
-  // Carga inicial de sesión Supabase y catálogo de alimentos
+  // Carga inicial de sesión y catálogo de alimentos
   useEffect(() => {
     let active = true;
 
@@ -169,31 +168,14 @@ export default function App() {
         // usa DEFAULT_ALIMENTOS
       }
 
-      if (!supabase || !isSupabaseConfigured) {
+      if (!isSupabaseConfigured) {
         if (active) setAuthReady(true);
         return;
       }
 
       try {
-        const {
-          data: {session},
-        } = await supabase.auth.getSession();
-
-        if (session?.user && active) {
-          const p =
-            (await getEstablishmentProfile(session.user.id)) || {
-              id: session.user.id,
-              nombre:
-                (session.user.user_metadata?.nombre as string) ||
-                'Establecimiento',
-              usuario:
-                (session.user.user_metadata?.usuario as string) ||
-                session.user.email?.split('@')[0] ||
-                'usuario',
-              correo_contacto:
-                (session.user.user_metadata?.correo_contacto as string) || null,
-              tipo: 'establecimiento',
-            };
+        const p = await restoreSession();
+        if (p && active) {
           setProfile(p);
           await syncHistory(p.id);
         }
@@ -206,18 +188,8 @@ export default function App() {
 
     init();
 
-    const {data: authSub} = supabase
-      ? supabase.auth.onAuthStateChange((_event, session) => {
-          if (!session && active) {
-            setProfile(null);
-            setRegistros([]);
-          }
-        })
-      : {data: {subscription: null}};
-
     return () => {
       active = false;
-      authSub?.subscription?.unsubscribe();
     };
   }, [syncHistory]);
 

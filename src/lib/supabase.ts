@@ -7,6 +7,8 @@ import type {
 } from '../types/meep';
 import {DEFAULT_ALIMENTOS} from './meepCore';
 
+const SESSION_TOKEN_KEY = 'meep.session.token.v1';
+
 function normalizeSupabaseUrl(raw: string | undefined): string {
   const trimmed = (raw?.trim() || '').replace(/^["']+|["']+$/g, '');
   if (!trimmed) return '';
@@ -34,8 +36,8 @@ export const isSupabaseConfigured =
 export const supabase: SupabaseClient | null = isSupabaseConfigured
   ? createClient(supabaseUrl, supabaseAnonKey, {
       auth: {
-        persistSession: true,
-        autoRefreshToken: true,
+        persistSession: false,
+        autoRefreshToken: false,
         detectSessionInUrl: false,
       },
     })
@@ -49,24 +51,82 @@ export function normalizeUsuario(raw: string): string {
     .replace(/[^a-z0-9._-]/g, '');
 }
 
-export function buildInternalAuthEmail(usuario: string): string {
-  return `${normalizeUsuario(usuario)}@meeppemi.com`;
+function getStoredToken(): string | null {
+  try {
+    return localStorage.getItem(SESSION_TOKEN_KEY);
+  } catch {
+    return null;
+  }
 }
 
-export async function getEstablishmentProfile(
-  userId: string,
-): Promise<EstablishmentProfile | null> {
-  if (!supabase) return null;
-  const {data, error} = await supabase
-    .from('establecimientos')
-    .select('id, nombre, usuario, correo_contacto, tipo, created_at')
-    .eq('id', userId)
-    .maybeSingle();
-
-  if (error) {
-    throw new Error(error.message);
+function setStoredToken(token: string | null): void {
+  try {
+    if (token) {
+      localStorage.setItem(SESSION_TOKEN_KEY, token);
+    } else {
+      localStorage.removeItem(SESSION_TOKEN_KEY);
+    }
+  } catch {
+    // ignore storage errors
   }
-  return data as EstablishmentProfile | null;
+}
+
+function mapRpcError(message: string, usuarioClean?: string): string {
+  const upper = message.toUpperCase();
+  const lower = message.toLowerCase();
+
+  if (upper.includes('CREDENCIALES_INVALIDAS')) {
+    return 'Usuario o contraseña incorrectos. Verifica tus datos o crea tu cuenta en "Registrarse".';
+  }
+  if (upper.includes('USUARIO_DUPLICADO')) {
+    return `El usuario "${usuarioClean || ''}" ya está registrado. Cambia a "Iniciar sesión".`;
+  }
+  if (upper.includes('NOMBRE_INVALIDO')) {
+    return 'Ingresa el nombre completo del establecimiento.';
+  }
+  if (upper.includes('USUARIO_INVALIDO')) {
+    return 'El usuario debe tener entre 3 y 50 caracteres (solo letras, números, punto, guion o guion bajo).';
+  }
+  if (upper.includes('PASSWORD_CORTA')) {
+    return 'La contraseña debe tener al menos 6 caracteres.';
+  }
+  if (upper.includes('SESION_INVALIDA')) {
+    return 'Tu sesión expiró. Vuelve a iniciar sesión con el usuario de tu establecimiento.';
+  }
+  if (
+    lower.includes('could not find the function') ||
+    lower.includes('pgrst202') ||
+    lower.includes('does not exist')
+  ) {
+    return 'Falta ejecutar el archivo supabase/schema.sql actualizado en el SQL Editor de Supabase.';
+  }
+  if (
+    lower.includes('invalid api key') ||
+    lower.includes('apikey') ||
+    lower.includes('failed to fetch')
+  ) {
+    return `No se pudo conectar con Supabase (${message}). Revisa VITE_SUPABASE_URL y VITE_SUPABASE_ANON_KEY en GitHub Secrets.`;
+  }
+  return message || 'No se pudo completar la operación en Supabase.';
+}
+
+export async function restoreSession(): Promise<EstablishmentProfile | null> {
+  if (!supabase) return null;
+  const token = getStoredToken();
+  if (!token) return null;
+
+  const {data, error} = await supabase.rpc('meep_perfil', {
+    p_token: token,
+  });
+
+  if (error || !data) {
+    if (!error) {
+      setStoredToken(null);
+    }
+    return null;
+  }
+
+  return data as EstablishmentProfile;
 }
 
 export async function signInEstablishment(
@@ -84,75 +144,18 @@ export async function signInEstablishment(
     throw new Error('Ingresa tu usuario y contraseña.');
   }
 
-  let authEmail = clean.includes('@') ? clean : buildInternalAuthEmail(clean);
-
-  // Resuelve el correo interno asociado tanto si ingresa usuario como correo_contacto
-  try {
-    const {data: resolvedEmail} = await supabase.rpc('resolver_email_login', {
-      p_identificador: clean,
-    });
-
-    if (typeof resolvedEmail === 'string' && resolvedEmail.includes('@')) {
-      authEmail = resolvedEmail;
-    }
-  } catch {
-    // Si la función RPC aún no existe en Supabase, continúa con el email construido
-  }
-
-  const {data, error} = await supabase.auth.signInWithPassword({
-    email: authEmail,
-    password,
+  const {data, error} = await supabase.rpc('meep_login', {
+    p_identificador: clean,
+    p_password: password,
   });
 
-  if (error || !data.user) {
-    const msg = error?.message || '';
-    const lower = msg.toLowerCase();
-    if (lower.includes('email not confirmed')) {
-      throw new Error(
-        'Supabase requiere confirmar el correo. Ve a Authentication -> Providers -> Email y desactiva "Confirm email", o confirma el usuario en Authentication -> Users.',
-      );
-    }
-    if (lower.includes('database error')) {
-      throw new Error(
-        'Error interno en el usuario creado por SQL. Elimina el usuario en Authentication -> Users y créalo desde la pestaña "Registrarse" o "Add user".',
-      );
-    }
-    if (
-      lower.includes('invalid api key') ||
-      lower.includes('apikey') ||
-      lower.includes('failed to fetch')
-    ) {
-      throw new Error(
-        `No se pudo conectar con Supabase (${msg}). Revisa VITE_SUPABASE_URL y VITE_SUPABASE_ANON_KEY en GitHub Secrets.`,
-      );
-    }
-    throw new Error(
-      'Usuario o contraseña incorrectos. Verifica tus datos o usa la pestaña "Registrarse".',
-    );
+  if (error || !data) {
+    throw new Error(mapRpcError(error?.message || 'CREDENCIALES_INVALIDAS'));
   }
 
-  const profile = await getEstablishmentProfile(data.user.id);
-  if (!profile) {
-    return {
-      userId: data.user.id,
-      profile: {
-        id: data.user.id,
-        nombre:
-          (data.user.user_metadata?.nombre as string) ||
-          clean.split('@')[0],
-        usuario:
-          (data.user.user_metadata?.usuario as string) ||
-          normalizeUsuario(clean.split('@')[0]),
-        correo_contacto:
-          (data.user.user_metadata?.correo_contacto as string) || null,
-        tipo:
-          ((data.user.user_metadata?.tipo as EstablishmentType) ||
-            'establecimiento'),
-      },
-    };
-  }
-
-  return {userId: data.user.id, profile};
+  const res = data as {token: string; profile: EstablishmentProfile};
+  setStoredToken(res.token);
+  return {userId: res.profile.id, profile: res.profile};
 }
 
 export async function registerEstablishment(params: {
@@ -184,71 +187,32 @@ export async function registerEstablishment(params: {
     throw new Error('La contraseña debe tener al menos 6 caracteres.');
   }
 
-  const internalEmail = buildInternalAuthEmail(usuarioClean);
-
-  const {data, error} = await supabase.auth.signUp({
-    email: internalEmail,
-    password: params.password,
-    options: {
-      data: {
-        nombre,
-        usuario: usuarioClean,
-        correo_contacto: correoContacto || null,
-        tipo: params.tipo,
-      },
-    },
+  const {data, error} = await supabase.rpc('meep_registrar', {
+    p_nombre: nombre,
+    p_usuario: usuarioClean,
+    p_tipo: params.tipo,
+    p_correo_contacto: correoContacto || null,
+    p_password: params.password,
   });
 
-  if (error || !data.user) {
-    const msg = error?.message || '';
-    const lower = msg.toLowerCase();
-    if (
-      lower.includes('already registered') ||
-      lower.includes('already exists')
-    ) {
-      throw new Error(
-        `El usuario "${usuarioClean}" ya está registrado. Cambia a "Iniciar sesión".`,
-      );
-    }
-    if (lower.includes('database error saving new user')) {
-      throw new Error(
-        'Falta ejecutar supabase/schema.sql en el SQL Editor de Supabase para crear la tabla "establecimientos" y su trigger.',
-      );
-    }
-    if (
-      lower.includes('invalid api key') ||
-      lower.includes('apikey') ||
-      lower.includes('failed to fetch')
-    ) {
-      throw new Error(
-        `No se pudo conectar con Supabase (${msg}). Revisa VITE_SUPABASE_URL y VITE_SUPABASE_ANON_KEY en GitHub Secrets.`,
-      );
-    }
-    throw new Error(
-      msg || 'No se pudo completar el registro del establecimiento.',
-    );
+  if (error || !data) {
+    throw new Error(mapRpcError(error?.message || '', usuarioClean));
   }
 
-  if (!data.session) {
-    throw new Error(
-      'Tu cuenta se creó, pero Supabase tiene activada la confirmación por correo. Desactiva "Confirm email" en Authentication -> Providers -> Email.',
-    );
-  }
-
-  const profile = (await getEstablishmentProfile(data.user.id)) || {
-    id: data.user.id,
-    nombre,
-    usuario: usuarioClean,
-    correo_contacto: correoContacto || null,
-    tipo: params.tipo,
-  };
-
-  return {userId: data.user.id, profile};
+  const res = data as {token: string; profile: EstablishmentProfile};
+  setStoredToken(res.token);
+  return {userId: res.profile.id, profile: res.profile};
 }
 
 export async function signOutEstablishment(): Promise<void> {
-  if (!supabase) return;
-  await supabase.auth.signOut();
+  const token = getStoredToken();
+  setStoredToken(null);
+  if (!supabase || !token) return;
+  try {
+    await supabase.rpc('meep_logout', {p_token: token});
+  } catch {
+    // ignore logout cleanup errors
+  }
 }
 
 export async function fetchAlimentos(): Promise<FoodDefinition[]> {
@@ -280,22 +244,24 @@ export async function fetchAlimentos(): Promise<FoodDefinition[]> {
   }));
 }
 
-export async function fetchMediciones(
-  establecimientoId: string,
-): Promise<MeasurementRecord[]> {
-  if (!supabase) return [];
-  const {data, error} = await supabase
-    .from('mediciones')
-    .select('*')
-    .eq('establecimiento_id', establecimientoId)
-    .order('medido_at', {ascending: false})
-    .limit(200);
+interface RawMedicionRow {
+  id: string;
+  establecimiento_id: string;
+  alimento_clave: string;
+  ph: number | string | null;
+  temperatura: number | string | null;
+  estado: MeasurementRecord['estado'];
+  subestado: MeasurementRecord['subestado'];
+  led_color: MeasurementRecord['led_color'];
+  motivo: string | null;
+  manipulador: string | null;
+  dispositivo_codigo: string | null;
+  origen: MeasurementRecord['origen'];
+  medido_at: string;
+}
 
-  if (error || !data) {
-    throw new Error(error?.message || 'No se pudo cargar el historial.');
-  }
-
-  return data.map((row) => ({
+function mapMedicion(row: RawMedicionRow): MeasurementRecord {
+  return {
     id: row.id,
     establecimiento_id: row.establecimiento_id,
     alimento_clave: row.alimento_clave,
@@ -309,7 +275,27 @@ export async function fetchMediciones(
     dispositivo_codigo: row.dispositivo_codigo,
     origen: row.origen,
     medido_at: row.medido_at,
-  }));
+  };
+}
+
+export async function fetchMediciones(
+  _establecimientoId: string,
+): Promise<MeasurementRecord[]> {
+  if (!supabase) return [];
+  const token = getStoredToken();
+  if (!token) return [];
+
+  const {data, error} = await supabase.rpc('meep_listar_mediciones', {
+    p_token: token,
+  });
+
+  if (error || !data) {
+    throw new Error(
+      mapRpcError(error?.message || 'No se pudo cargar el historial.'),
+    );
+  }
+
+  return (data as RawMedicionRow[]).map(mapMedicion);
 }
 
 export async function insertMedicion(
@@ -318,51 +304,46 @@ export async function insertMedicion(
   if (!supabase) {
     throw new Error('Supabase no configurado.');
   }
-
-  const {data, error} = await supabase
-    .from('mediciones')
-    .insert({
-      establecimiento_id: payload.establecimiento_id,
-      alimento_clave: payload.alimento_clave,
-      ph: payload.ph,
-      temperatura: payload.temperatura,
-      estado: payload.estado,
-      subestado: payload.subestado,
-      led_color: payload.led_color,
-      motivo: payload.motivo,
-      manipulador: payload.manipulador,
-      dispositivo_codigo: payload.dispositivo_codigo,
-      origen: payload.origen,
-      medido_at: payload.medido_at,
-    })
-    .select('*')
-    .single();
-
-  if (error || !data) {
-    throw new Error(error?.message || 'No se pudo guardar la medición.');
+  const token = getStoredToken();
+  if (!token) {
+    throw new Error('Tu sesión expiró. Vuelve a iniciar sesión.');
   }
 
-  return {
-    id: data.id,
-    establecimiento_id: data.establecimiento_id,
-    alimento_clave: data.alimento_clave,
-    ph: data.ph !== null ? Number(data.ph) : null,
-    temperatura: data.temperatura !== null ? Number(data.temperatura) : null,
-    estado: data.estado,
-    subestado: data.subestado,
-    led_color: data.led_color,
-    motivo: data.motivo,
-    manipulador: data.manipulador,
-    dispositivo_codigo: data.dispositivo_codigo,
-    origen: data.origen,
-    medido_at: data.medido_at,
-  };
+  const {data, error} = await supabase.rpc('meep_insertar_medicion', {
+    p_token: token,
+    p_alimento_clave: payload.alimento_clave,
+    p_ph: payload.ph,
+    p_temperatura: payload.temperatura,
+    p_estado: payload.estado,
+    p_subestado: payload.subestado,
+    p_led_color: payload.led_color,
+    p_motivo: payload.motivo,
+    p_manipulador: payload.manipulador,
+    p_dispositivo_codigo: payload.dispositivo_codigo,
+    p_origen: payload.origen,
+    p_medido_at: payload.medido_at,
+  });
+
+  if (error || !data) {
+    throw new Error(
+      mapRpcError(error?.message || 'No se pudo guardar la medición.'),
+    );
+  }
+
+  return mapMedicion(data as RawMedicionRow);
 }
 
 export async function deleteMedicion(id: string): Promise<void> {
   if (!supabase) return;
-  const {error} = await supabase.from('mediciones').delete().eq('id', id);
+  const token = getStoredToken();
+  if (!token) return;
+
+  const {error} = await supabase.rpc('meep_eliminar_medicion', {
+    p_token: token,
+    p_medicion_id: id,
+  });
+
   if (error) {
-    throw new Error(error.message);
+    throw new Error(mapRpcError(error.message));
   }
 }

@@ -1,21 +1,45 @@
 -- ============================================================================
--- MEEP / PROYECTO PEMI (INSUCO ABG) - ESQUEMA SUPABASE + AUTH + RLS
+-- MEEP / PROYECTO PEMI (INSUCO ABG) - ESQUEMA SUPABASE (USUARIO + CLAVE + RLS)
+-- ============================================================================
+-- Autenticación directa por usuario de establecimiento (sin requerir correo).
+-- Ejecuta este script completo en: Supabase -> SQL Editor -> New query -> Run.
 -- ============================================================================
 
 create extension if not exists pgcrypto with schema extensions;
 
 create table if not exists public.establecimientos (
-  id uuid primary key references auth.users(id) on delete cascade,
+  id uuid primary key default gen_random_uuid(),
   nombre text not null check (char_length(trim(nombre)) >= 2),
   usuario text not null unique check (
     usuario = lower(trim(usuario))
     and usuario ~ '^[a-z0-9._-]{3,50}$'
   ),
+  password_hash text,
   correo_contacto text,
   tipo text not null default 'establecimiento'
     check (tipo in ('establecimiento', 'casino_junaeb', 'pyme')),
   created_at timestamptz not null default now()
 );
+
+-- Migración segura si ya existía la tabla vinculada a auth.users
+alter table if exists public.establecimientos
+  drop constraint if exists establecimientos_id_fkey;
+
+alter table if exists public.establecimientos
+  alter column id set default gen_random_uuid();
+
+alter table if exists public.establecimientos
+  add column if not exists password_hash text;
+
+create table if not exists public.establecimiento_sesiones (
+  token text primary key,
+  establecimiento_id uuid not null references public.establecimientos(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  expires_at timestamptz not null default (now() + interval '30 days')
+);
+
+create index if not exists idx_sesiones_estab
+  on public.establecimiento_sesiones (establecimiento_id);
 
 create table if not exists public.alimentos (
   clave text primary key,
@@ -67,22 +91,18 @@ select
 from public.mediciones
 group by establecimiento_id;
 
+-- Seguridad RLS: solo alimentos es público en lectura; establecimientos, sesiones
+-- y mediciones se consultan exclusivamente mediante funciones RPC validadas.
 alter table public.establecimientos enable row level security;
+alter table public.establecimiento_sesiones enable row level security;
 alter table public.alimentos enable row level security;
 alter table public.mediciones enable row level security;
 
 drop policy if exists "establecimientos_select_propio" on public.establecimientos;
-create policy "establecimientos_select_propio"
-  on public.establecimientos for select
-  to authenticated
-  using (auth.uid() = id);
-
 drop policy if exists "establecimientos_update_propio" on public.establecimientos;
-create policy "establecimientos_update_propio"
-  on public.establecimientos for update
-  to authenticated
-  using (auth.uid() = id)
-  with check (auth.uid() = id);
+drop policy if exists "mediciones_select_propias" on public.mediciones;
+drop policy if exists "mediciones_insert_propias" on public.mediciones;
+drop policy if exists "mediciones_delete_propias" on public.mediciones;
 
 drop policy if exists "alimentos_select_todos" on public.alimentos;
 create policy "alimentos_select_todos"
@@ -90,100 +110,302 @@ create policy "alimentos_select_todos"
   to anon, authenticated
   using (true);
 
-drop policy if exists "mediciones_select_propias" on public.mediciones;
-create policy "mediciones_select_propias"
-  on public.mediciones for select
-  to authenticated
-  using (establecimiento_id = auth.uid());
+-- ============================================================================
+-- FUNCIONES RPC DE AUTENTICACIÓN POR USUARIO Y GESTIÓN DE MEDICIONES
+-- ============================================================================
 
-drop policy if exists "mediciones_insert_propias" on public.mediciones;
-create policy "mediciones_insert_propias"
-  on public.mediciones for insert
-  to authenticated
-  with check (establecimiento_id = auth.uid());
+create or replace function public.meep_registrar(
+  p_nombre text,
+  p_usuario text,
+  p_tipo text,
+  p_correo_contacto text,
+  p_password text
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_nombre text := trim(coalesce(p_nombre, ''));
+  v_usuario text := regexp_replace(lower(trim(coalesce(p_usuario, ''))), '[^a-z0-9._-]', '', 'g');
+  v_tipo text := case
+    when p_tipo in ('establecimiento', 'casino_junaeb', 'pyme') then p_tipo
+    else 'establecimiento'
+  end;
+  v_correo text := nullif(trim(coalesce(p_correo_contacto, '')), '');
+  v_est public.establecimientos;
+  v_token text;
+begin
+  if char_length(v_nombre) < 2 then
+    raise exception 'NOMBRE_INVALIDO';
+  end if;
 
-drop policy if exists "mediciones_delete_propias" on public.mediciones;
-create policy "mediciones_delete_propias"
-  on public.mediciones for delete
-  to authenticated
-  using (establecimiento_id = auth.uid());
+  if v_usuario !~ '^[a-z0-9._-]{3,50}$' then
+    raise exception 'USUARIO_INVALIDO';
+  end if;
 
-create or replace function public.handle_new_establecimiento()
-returns trigger
+  if char_length(coalesce(p_password, '')) < 6 then
+    raise exception 'PASSWORD_CORTA';
+  end if;
+
+  if exists (select 1 from public.establecimientos where usuario = v_usuario) then
+    raise exception 'USUARIO_DUPLICADO';
+  end if;
+
+  insert into public.establecimientos (nombre, usuario, password_hash, correo_contacto, tipo)
+  values (
+    v_nombre,
+    v_usuario,
+    crypt(p_password, gen_salt('bf')),
+    v_correo,
+    v_tipo
+  )
+  returning * into v_est;
+
+  v_token := encode(gen_random_bytes(32), 'hex');
+  insert into public.establecimiento_sesiones (token, establecimiento_id)
+  values (v_token, v_est.id);
+
+  return jsonb_build_object(
+    'token', v_token,
+    'profile', jsonb_build_object(
+      'id', v_est.id,
+      'nombre', v_est.nombre,
+      'usuario', v_est.usuario,
+      'correo_contacto', v_est.correo_contacto,
+      'tipo', v_est.tipo,
+      'created_at', v_est.created_at
+    )
+  );
+end;
+$$;
+
+create or replace function public.meep_login(
+  p_identificador text,
+  p_password text
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_clean text := lower(trim(coalesce(p_identificador, '')));
+  v_est public.establecimientos;
+  v_token text;
+begin
+  if v_clean = '' or coalesce(p_password, '') = '' then
+    raise exception 'CREDENCIALES_INVALIDAS';
+  end if;
+
+  select * into v_est
+  from public.establecimientos e
+  where e.usuario = v_clean
+     or lower(coalesce(e.correo_contacto, '')) = v_clean
+  limit 1;
+
+  if v_est.id is null
+     or v_est.password_hash is null
+     or v_est.password_hash <> crypt(p_password, v_est.password_hash) then
+    raise exception 'CREDENCIALES_INVALIDAS';
+  end if;
+
+  v_token := encode(gen_random_bytes(32), 'hex');
+  insert into public.establecimiento_sesiones (token, establecimiento_id)
+  values (v_token, v_est.id);
+
+  return jsonb_build_object(
+    'token', v_token,
+    'profile', jsonb_build_object(
+      'id', v_est.id,
+      'nombre', v_est.nombre,
+      'usuario', v_est.usuario,
+      'correo_contacto', v_est.correo_contacto,
+      'tipo', v_est.tipo,
+      'created_at', v_est.created_at
+    )
+  );
+end;
+$$;
+
+create or replace function public.meep_perfil(p_token text)
+returns jsonb
 language plpgsql
 security definer
 set search_path = public
 as $$
 declare
-  v_usuario text;
-  v_nombre text;
-  v_correo text;
+  v_est public.establecimientos;
 begin
-  v_usuario := lower(trim(coalesce(
-    new.raw_user_meta_data ->> 'usuario',
-    split_part(new.email, '@', 1)
-  )));
-  v_nombre := trim(coalesce(
-    new.raw_user_meta_data ->> 'nombre',
-    v_usuario
-  ));
-  v_correo := nullif(trim(coalesce(new.raw_user_meta_data ->> 'correo_contacto', '')), '');
+  if coalesce(trim(p_token), '') = '' then
+    return null;
+  end if;
 
-  insert into public.establecimientos (id, nombre, usuario, correo_contacto, tipo)
-  values (
-    new.id,
-    v_nombre,
-    v_usuario,
-    v_correo,
-    coalesce(new.raw_user_meta_data ->> 'tipo', 'establecimiento')
-  )
-  on conflict (id) do nothing;
+  select e.* into v_est
+  from public.establecimiento_sesiones s
+  join public.establecimientos e on e.id = s.establecimiento_id
+  where s.token = p_token
+    and s.expires_at > now()
+  limit 1;
 
-  return new;
+  if v_est.id is null then
+    return null;
+  end if;
+
+  return jsonb_build_object(
+    'id', v_est.id,
+    'nombre', v_est.nombre,
+    'usuario', v_est.usuario,
+    'correo_contacto', v_est.correo_contacto,
+    'tipo', v_est.tipo,
+    'created_at', v_est.created_at
+  );
 end;
 $$;
 
-drop trigger if exists on_auth_user_created_establecimiento on auth.users;
-create trigger on_auth_user_created_establecimiento
-  after insert on auth.users
-  for each row execute function public.handle_new_establecimiento();
-
-create or replace function public.usuario_disponible(p_usuario text)
-returns boolean
+create or replace function public.meep_logout(p_token text)
+returns void
 language sql
 security definer
 set search_path = public
 as $$
-  select not exists (
-    select 1 from public.establecimientos
-    where usuario = lower(trim(p_usuario))
-  );
+  delete from public.establecimiento_sesiones where token = p_token;
 $$;
 
-create or replace function public.resolver_email_login(p_identificador text)
-returns text
+create or replace function public.meep_listar_mediciones(p_token text)
+returns setof public.mediciones
 language plpgsql
 security definer
-set search_path = public, auth
+set search_path = public
 as $$
 declare
-  v_clean text := lower(trim(p_identificador));
-  v_email text;
+  v_est_id uuid;
 begin
-  select u.email into v_email
-  from public.establecimientos e
-  join auth.users u on u.id = e.id
-  where e.usuario = v_clean
-     or lower(coalesce(e.correo_contacto, '')) = v_clean
-     or lower(u.email) = v_clean
+  select s.establecimiento_id into v_est_id
+  from public.establecimiento_sesiones s
+  where s.token = p_token
+    and s.expires_at > now()
   limit 1;
 
-  return v_email;
+  if v_est_id is null then
+    raise exception 'SESION_INVALIDA';
+  end if;
+
+  return query
+  select *
+  from public.mediciones m
+  where m.establecimiento_id = v_est_id
+  order by m.medido_at desc
+  limit 200;
 end;
 $$;
 
-grant execute on function public.usuario_disponible(text) to anon, authenticated;
-grant execute on function public.resolver_email_login(text) to anon, authenticated;
+create or replace function public.meep_insertar_medicion(
+  p_token text,
+  p_alimento_clave text,
+  p_ph numeric,
+  p_temperatura numeric,
+  p_estado text,
+  p_subestado text,
+  p_led_color text,
+  p_motivo text,
+  p_manipulador text,
+  p_dispositivo_codigo text,
+  p_origen text,
+  p_medido_at timestamptz
+)
+returns public.mediciones
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_est_id uuid;
+  v_row public.mediciones;
+begin
+  select s.establecimiento_id into v_est_id
+  from public.establecimiento_sesiones s
+  where s.token = p_token
+    and s.expires_at > now()
+  limit 1;
+
+  if v_est_id is null then
+    raise exception 'SESION_INVALIDA';
+  end if;
+
+  insert into public.mediciones (
+    establecimiento_id,
+    alimento_clave,
+    ph,
+    temperatura,
+    estado,
+    subestado,
+    led_color,
+    motivo,
+    manipulador,
+    dispositivo_codigo,
+    origen,
+    medido_at
+  ) values (
+    v_est_id,
+    p_alimento_clave,
+    p_ph,
+    p_temperatura,
+    p_estado,
+    coalesce(p_subestado, 'no_interpretable'),
+    coalesce(p_led_color, 'apagado'),
+    p_motivo,
+    p_manipulador,
+    p_dispositivo_codigo,
+    coalesce(p_origen, 'bluetooth'),
+    coalesce(p_medido_at, now())
+  )
+  returning * into v_row;
+
+  return v_row;
+end;
+$$;
+
+create or replace function public.meep_eliminar_medicion(
+  p_token text,
+  p_medicion_id uuid
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_est_id uuid;
+begin
+  select s.establecimiento_id into v_est_id
+  from public.establecimiento_sesiones s
+  where s.token = p_token
+    and s.expires_at > now()
+  limit 1;
+
+  if v_est_id is null then
+    raise exception 'SESION_INVALIDA';
+  end if;
+
+  delete from public.mediciones
+  where id = p_medicion_id
+    and establecimiento_id = v_est_id;
+end;
+$$;
+
+grant execute on function public.meep_registrar(text, text, text, text, text) to anon, authenticated;
+grant execute on function public.meep_login(text, text) to anon, authenticated;
+grant execute on function public.meep_perfil(text) to anon, authenticated;
+grant execute on function public.meep_logout(text) to anon, authenticated;
+grant execute on function public.meep_listar_mediciones(text) to anon, authenticated;
+grant execute on function public.meep_insertar_medicion(text, text, numeric, numeric, text, text, text, text, text, text, text, timestamptz) to anon, authenticated;
+grant execute on function public.meep_eliminar_medicion(text, uuid) to anon, authenticated;
+
+-- ============================================================================
+-- DATOS INICIALES: ALIMENTOS LÁCTEOS + CUENTA OFICIAL INSUCO ABG
+-- ============================================================================
 
 insert into public.alimentos (
   clave, nombre, icono, ph_min, ph_max,
@@ -200,19 +422,17 @@ on conflict (clave) do update set
   rango_contaminado_min = excluded.rango_contaminado_min,
   orden = excluded.orden;
 
--- Reparación segura del usuario INSUCO ABG (evita campos NULL en auth.users)
-update auth.users
-set
-  email_confirmed_at = coalesce(email_confirmed_at, now()),
-  confirmation_token = coalesce(confirmation_token, ''),
-  email_change = coalesce(email_change, ''),
-  email_change_token_new = coalesce(email_change_token_new, ''),
-  email_change_token_current = coalesce(email_change_token_current, ''),
-  recovery_token = coalesce(recovery_token, ''),
-  phone_change = coalesce(phone_change, ''),
-  phone_change_token = coalesce(phone_change_token, ''),
-  reauthentication_token = coalesce(reauthentication_token, '')
-where email in (
-  'institutodecomercioinsucoabg@meeppemi.com',
-  'institutodecomercioinsucoabg@meep.pemi'
-);
+insert into public.establecimientos (
+  nombre, usuario, password_hash, correo_contacto, tipo
+) values (
+  'INSUCO ABG',
+  'institutodecomercioinsucoabg',
+  extensions.crypt('INSUCOABGALIMENTOS2026', extensions.gen_salt('bf')),
+  null,
+  'establecimiento'
+)
+on conflict (usuario) do update set
+  nombre = excluded.nombre,
+  password_hash = excluded.password_hash;
+
+notify pgrst, 'reload schema';

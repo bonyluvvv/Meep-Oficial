@@ -772,7 +772,7 @@ export const WebLandingPortal: React.FC<WebLandingPortalProps> = ({
 
                   {authMode === 'login' && (
                     <label className="flex flex-col gap-1 text-sm font-extrabold text-[#263238]">
-                      <span>Usuario o correo del establecimiento</span>
+                      <span>Usuario del establecimiento</span>
                       <input
                         type="text"
                         required
