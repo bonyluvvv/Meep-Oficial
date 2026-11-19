@@ -17,7 +17,7 @@ export default defineConfig(() => {
         registerType: 'autoUpdate',
         includeAssets: ['icon.svg', 'apple-touch-icon.png', 'pwa-192x192.png', 'pwa-512x512.png'],
         manifest: {
-          id: './',
+          id: base,
           name: 'MEEP - Medidor de pH',
           short_name: 'MEEP',
           description:
@@ -26,8 +26,8 @@ export default defineConfig(() => {
           background_color: '#F7F7F2',
           display: 'standalone',
           orientation: 'portrait',
-          start_url: './',
-          scope: './',
+          start_url: base,
+          scope: base,
           lang: 'es-CL',
           icons: [
             {
