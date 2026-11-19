@@ -72,12 +72,16 @@ export async function signInEstablishment(
   let authEmail = clean.includes('@') ? clean : buildInternalAuthEmail(clean);
 
   // Resuelve el correo interno asociado tanto si ingresa usuario como correo_contacto
-  const {data: resolvedEmail} = await supabase.rpc('resolver_email_login', {
-    p_identificador: clean,
-  });
+  try {
+    const {data: resolvedEmail} = await supabase.rpc('resolver_email_login', {
+      p_identificador: clean,
+    });
 
-  if (typeof resolvedEmail === 'string' && resolvedEmail.includes('@')) {
-    authEmail = resolvedEmail;
+    if (typeof resolvedEmail === 'string' && resolvedEmail.includes('@')) {
+      authEmail = resolvedEmail;
+    }
+  } catch {
+    // Si la función RPC aún no existe en Supabase, continúa con el email construido
   }
 
   const {data, error} = await supabase.auth.signInWithPassword({
@@ -87,18 +91,28 @@ export async function signInEstablishment(
 
   if (error || !data.user) {
     const msg = error?.message || '';
-    if (msg.toLowerCase().includes('email not confirmed')) {
+    const lower = msg.toLowerCase();
+    if (lower.includes('email not confirmed')) {
       throw new Error(
         'Supabase requiere confirmar el correo. Ve a Authentication -> Providers -> Email y desactiva "Confirm email", o confirma el usuario en Authentication -> Users.',
       );
     }
-    if (msg.toLowerCase().includes('database error')) {
+    if (lower.includes('database error')) {
       throw new Error(
-        'Error interno en el usuario creado por SQL. Elimina el usuario en Authentication -> Users y créalo desde "Registrar nuevo" o "Add user".',
+        'Error interno en el usuario creado por SQL. Elimina el usuario en Authentication -> Users y créalo desde la pestaña "Registrarse" o "Add user".',
+      );
+    }
+    if (
+      lower.includes('invalid api key') ||
+      lower.includes('apikey') ||
+      lower.includes('failed to fetch')
+    ) {
+      throw new Error(
+        `No se pudo conectar con Supabase (${msg}). Revisa VITE_SUPABASE_URL y VITE_SUPABASE_ANON_KEY en GitHub Secrets.`,
       );
     }
     throw new Error(
-      'Usuario o contraseña incorrectos. Verifica tus datos o usa la pestaña "Registrar nuevo".',
+      'Usuario o contraseña incorrectos. Verifica tus datos o usa la pestaña "Registrarse".',
     );
   }
 
@@ -161,9 +175,20 @@ export async function registerEstablishment(params: {
   );
 
   if (checkError) {
-    throw new Error('No se pudo verificar la disponibilidad del usuario.');
-  }
-  if (disponible === false) {
+    const lower = checkError.message.toLowerCase();
+    const isMissingFunction =
+      checkError.code === 'PGRST202' ||
+      lower.includes('could not find the function') ||
+      lower.includes('does not exist');
+
+    if (!isMissingFunction) {
+      throw new Error(
+        `No se pudo verificar el usuario en Supabase: ${checkError.message}`,
+      );
+    }
+    // Si solo falta la función RPC usuario_disponible, continuamos con signUp
+    // (Supabase Auth validará si el correo interno ya existe).
+  } else if (disponible === false) {
     throw new Error(
       `El usuario "${usuarioClean}" ya está registrado. Intenta iniciar sesión.`,
     );
@@ -185,8 +210,23 @@ export async function registerEstablishment(params: {
   });
 
   if (error || !data.user) {
+    const msg = error?.message || '';
+    const lower = msg.toLowerCase();
+    if (
+      lower.includes('already registered') ||
+      lower.includes('already exists')
+    ) {
+      throw new Error(
+        `El usuario "${usuarioClean}" ya está registrado. Cambia a "Iniciar sesión".`,
+      );
+    }
+    if (lower.includes('database error saving new user')) {
+      throw new Error(
+        'Falta ejecutar supabase/schema.sql en el SQL Editor de Supabase para crear la tabla "establecimientos" y su trigger.',
+      );
+    }
     throw new Error(
-      error?.message || 'No se pudo completar el registro del establecimiento.',
+      msg || 'No se pudo completar el registro del establecimiento.',
     );
   }
 
