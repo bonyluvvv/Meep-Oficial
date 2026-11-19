@@ -8,7 +8,7 @@ import type {
 import {DEFAULT_ALIMENTOS} from './meepCore';
 
 function normalizeSupabaseUrl(raw: string | undefined): string {
-  const trimmed = raw?.trim() || '';
+  const trimmed = (raw?.trim() || '').replace(/^["']+|["']+$/g, '');
   if (!trimmed) return '';
   try {
     const parsed = new URL(trimmed);
@@ -22,7 +22,9 @@ const supabaseUrl = normalizeSupabaseUrl(
   import.meta.env.VITE_SUPABASE_URL as string | undefined,
 );
 const supabaseAnonKey =
-  (import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined)?.trim() || '';
+  (import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined)
+    ?.trim()
+    .replace(/^["']+|["']+$/g, '') || '';
 
 export const isSupabaseConfigured =
   Boolean(supabaseUrl) &&
