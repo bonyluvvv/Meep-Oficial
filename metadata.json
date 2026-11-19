@@ -1,0 +1,6 @@
+{
+  "name": "MEEP - Medidor de pH",
+  "description": "Aplicación móvil instalable para medir el pH de alimentos lácteos por Bluetooth y registrar el historial por establecimiento (Proyecto PEMI - INSUCO ABG).",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

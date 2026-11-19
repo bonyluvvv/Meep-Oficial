@@ -1,0 +1,86 @@
+@import "tailwindcss";
+
+:root {
+  --verde: #2E7D32;
+  --teal: #2A9D8F;
+  --petroleo: #17324D;
+  --fondo: #F7F7F2;
+  --rojo: #C62828;
+  --ambar: #F4A261;
+  --texto: #263238;
+  --muted: #55656D;
+  --linea: #E1E3DA;
+  --tarjeta: #FFFFFF;
+  --neutro: #E9ECEE;
+  --verde-tint: #E5F0E6;
+  --rojo-tint: #FAE8E8;
+  --ambar-tint: #FDEEDF;
+  --teal-tint: #E0F1EF;
+  --exterior: #EFEFE8;
+  --display: "Sora", "Segoe UI", system-ui, sans-serif;
+  --body: "Nunito Sans", "Segoe UI", system-ui, sans-serif;
+  color-scheme: light;
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    margin: 0;
+    background: var(--exterior);
+    color: var(--texto);
+    font-family: var(--body);
+    font-size: 16px;
+    line-height: 1.45;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  h1,
+  h2,
+  h3 {
+    font-family: var(--display);
+    text-wrap: balance;
+  }
+}
+
+.font-display {
+  font-family: var(--display);
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+@keyframes meep-wave {
+  0% {
+    transform: scale(0.5);
+    opacity: 0.8;
+  }
+  100% {
+    transform: scale(1.1);
+    opacity: 0;
+  }
+}
+
+.meep-wave {
+  animation: meep-wave 2s ease-out infinite;
+}
+
+.meep-wave-delay-1 {
+  animation-delay: 0.65s;
+}
+
+.meep-wave-delay-2 {
+  animation-delay: 1.3s;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .meep-wave {
+    animation: none;
+    opacity: 0.35;
+  }
+}
