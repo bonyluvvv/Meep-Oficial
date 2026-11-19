@@ -169,31 +169,6 @@ export async function registerEstablishment(params: {
     throw new Error('La contraseña debe tener al menos 6 caracteres.');
   }
 
-  const {data: disponible, error: checkError} = await supabase.rpc(
-    'usuario_disponible',
-    {p_usuario: usuarioClean},
-  );
-
-  if (checkError) {
-    const lower = checkError.message.toLowerCase();
-    const isMissingFunction =
-      checkError.code === 'PGRST202' ||
-      lower.includes('could not find the function') ||
-      lower.includes('does not exist');
-
-    if (!isMissingFunction) {
-      throw new Error(
-        `No se pudo verificar el usuario en Supabase: ${checkError.message}`,
-      );
-    }
-    // Si solo falta la función RPC usuario_disponible, continuamos con signUp
-    // (Supabase Auth validará si el correo interno ya existe).
-  } else if (disponible === false) {
-    throw new Error(
-      `El usuario "${usuarioClean}" ya está registrado. Intenta iniciar sesión.`,
-    );
-  }
-
   const internalEmail = buildInternalAuthEmail(usuarioClean);
 
   const {data, error} = await supabase.auth.signUp({
@@ -223,6 +198,15 @@ export async function registerEstablishment(params: {
     if (lower.includes('database error saving new user')) {
       throw new Error(
         'Falta ejecutar supabase/schema.sql en el SQL Editor de Supabase para crear la tabla "establecimientos" y su trigger.',
+      );
+    }
+    if (
+      lower.includes('invalid api key') ||
+      lower.includes('apikey') ||
+      lower.includes('failed to fetch')
+    ) {
+      throw new Error(
+        `No se pudo conectar con Supabase (${msg}). Revisa VITE_SUPABASE_URL y VITE_SUPABASE_ANON_KEY en GitHub Secrets.`,
       );
     }
     throw new Error(
