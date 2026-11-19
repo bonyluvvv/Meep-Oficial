@@ -2,6 +2,7 @@ import React, {useCallback, useEffect, useState} from 'react';
 import {
   ArrowLeft,
   Clock,
+  Globe,
   HelpCircle,
   LogOut,
   Building2,
@@ -16,6 +17,7 @@ import {
 import {MeepLogo, ProbeIcon} from './components/MeepIcons';
 import {OfflineIndicator} from './components/OfflineIndicator';
 import {PWAInstallButton} from './components/PWAInstallButton';
+import {WebLandingPortal} from './components/WebLandingPortal';
 import {meepBluetooth, type BleReading} from './lib/bluetooth';
 import {DEFAULT_ALIMENTOS, interpretarPh} from './lib/meepCore';
 import {
@@ -37,11 +39,27 @@ import type {
 } from './types/meep';
 
 type MainTab = 'medir' | 'historial' | 'ayuda';
+type AppSurface = 'web' | 'app';
 
 const LOCAL_HISTORY_KEY = 'meep.local.mediciones.v1';
 const LOCAL_HANDLER_KEY = 'meep.manipulador.v1';
 
+function detectInitialSurface(): AppSurface {
+  if (typeof window === 'undefined') return 'web';
+  if (
+    window.location.hash.startsWith('#/app') ||
+    window.location.search.includes('app=1')
+  ) {
+    return 'app';
+  }
+  const isStandalone =
+    window.matchMedia?.('(display-mode: standalone)').matches ||
+    (window.navigator as {standalone?: boolean}).standalone === true;
+  return isStandalone ? 'app' : 'web';
+}
+
 export default function App() {
+  const [surface, setSurface] = useState<AppSurface>(detectInitialSurface);
   const [authReady, setAuthReady] = useState(false);
   const [profile, setProfile] = useState<EstablishmentProfile | null>(null);
   const [localOnlyMode, setLocalOnlyMode] = useState(false);
@@ -79,6 +97,29 @@ export default function App() {
     window.setTimeout(() => {
       setToastMsg((prev) => (prev === msg ? '' : prev));
     }, 2600);
+  }, []);
+
+  const openSurface = useCallback((next: AppSurface) => {
+    setSurface(next);
+    if (typeof window !== 'undefined') {
+      const targetHash = next === 'app' ? '#/app' : '#/';
+      if (window.location.hash !== targetHash) {
+        window.history.replaceState(null, '', targetHash);
+      }
+      window.scrollTo({top: 0, behavior: 'auto'});
+    }
+  }, []);
+
+  useEffect(() => {
+    const onHashChange = () => {
+      if (window.location.hash.startsWith('#/app')) {
+        setSurface('app');
+      } else if (window.location.hash === '#/' || window.location.hash === '') {
+        setSurface('web');
+      }
+    };
+    window.addEventListener('hashchange', onHashChange);
+    return () => window.removeEventListener('hashchange', onHashChange);
   }, []);
 
   const loadLocalHistory = useCallback(() => {
@@ -387,6 +428,30 @@ export default function App() {
     );
   }
 
+  if (surface === 'web') {
+    return (
+      <>
+        <OfflineIndicator />
+        <WebLandingPortal
+          profile={profile}
+          alimentos={alimentos}
+          registros={registros}
+          loadingHistory={loadingHistory}
+          onAuthenticated={async (est) => {
+            setProfile(est);
+            setLocalOnlyMode(false);
+            await syncHistory(est.id);
+          }}
+          onLogout={handleLogout}
+          onRefreshHistory={() => {
+            if (profile) void syncHistory(profile.id);
+          }}
+          onOpenApp={() => openSurface('app')}
+        />
+      </>
+    );
+  }
+
   if (!profile && !localOnlyMode) {
     return (
       <AuthScreen
@@ -400,6 +465,7 @@ export default function App() {
           setLocalOnlyMode(true);
           setRegistros(loadLocalHistory());
         }}
+        onBackToWeb={() => openSurface('web')}
       />
     );
   }
@@ -490,6 +556,16 @@ export default function App() {
           </nav>
 
           <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => openSurface('web')}
+              title="Ir a la página web"
+              aria-label="Ir a la página web"
+              className="flex h-10 items-center gap-1.5 rounded-xl bg-white/12 px-3 text-xs font-bold text-white hover:bg-white/20 whitespace-nowrap shrink-0"
+            >
+              <Globe className="h-4 w-4 shrink-0" />
+              <span className="hidden sm:inline">Web</span>
+            </button>
             <PWAInstallButton variant="header" />
             <button
               type="button"

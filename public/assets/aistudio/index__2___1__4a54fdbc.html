@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <title>MEEP · Acceso</title>
+  <meta name="theme-color" content="#17324D">
+  <link rel="manifest" href="manifest.json">
+  <style>
+    :root{--petroleo:#17324D;--teal:#2A9D8F;--fondo:#F7F7F2;--texto:#263238;--muted:#55656D;--linea:#DDE2DC;--rojo:#C62828}
+    *{box-sizing:border-box} body{margin:0;min-height:100vh;display:grid;place-items:center;background:#E8E9E1;color:var(--texto);font:16px/1.45 "Segoe UI",system-ui,sans-serif}
+    .auth{width:min(420px,calc(100% - 28px));background:var(--fondo);border:1px solid var(--linea);border-radius:24px;overflow:hidden;box-shadow:0 14px 40px rgba(23,50,77,.12)}
+    header{background:var(--petroleo);color:#fff;text-align:center;padding:28px 20px} h1{margin:8px 0 2px;font-size:28px} header p{margin:0;opacity:.82}
+    main{padding:22px}.tabs{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:18px}.tabs button{min-height:44px;border-radius:12px;font-weight:800;color:var(--muted);background:#fff;border:1px solid var(--linea)}.tabs button[aria-selected=true]{background:var(--teal);color:#fff;border-color:var(--teal)}
+    form{display:flex;flex-direction:column;gap:12px}label{display:flex;flex-direction:column;gap:5px;font-size:14px;font-weight:800}input{width:100%;min-height:50px;border:1px solid var(--linea);border-radius:13px;padding:10px 13px;font:inherit;background:#fff;color:var(--texto)}input:focus{outline:3px solid rgba(42,157,143,.25);border-color:var(--teal)}
+    .primary,.secondary{min-height:52px;border-radius:14px;font-size:16px;font-weight:800;width:100%}.primary{background:var(--petroleo);color:#fff}.secondary{background:#fff;color:var(--petroleo);border:2px solid var(--petroleo);margin-top:10px}.error{display:none;color:var(--rojo);background:#FAE8E8;border:1px solid #E3A8A8;padding:10px 12px;border-radius:12px;font-size:14px}.error.show{display:block}
+  </style>
+</head>
+<body>
+  <section class="auth" aria-label="Acceso a MEEP">
+    <header><strong>MEEP</strong><h1 id="title">Iniciar sesión</h1><p id="subtitle">Accede a tu medidor de pH</p></header>
+    <main>
+      <div class="tabs" role="tablist" aria-label="Opciones de acceso">
+        <button id="loginTab" type="button" role="tab" aria-selected="true">Iniciar sesión</button>
+        <button id="registerTab" type="button" role="tab" aria-selected="false">Registrarse</button>
+      </div>
+      <div class="error" id="error" role="alert"></div>
+      <form id="authForm">
+        <label id="nameField" hidden>Nombre<input id="name" autocomplete="name" maxlength="80"></label>
+        <label>Correo electrónico<input id="email" type="email" autocomplete="email" required></label>
+        <label>Contraseña<input id="password" type="password" autocomplete="current-password" minlength="6" required></label>
+        <button class="primary" id="submit" type="submit">Ingresar</button>
+      </form>
+      <button class="secondary" id="demo" type="button">Entrar sin cuenta</button>
+    </main>
+  </section>
+  <script>
+    const APP_URL = './Aplicación%20Meep.html';
+    const KEY = 'meep.cuentas.v1';
+    const SESSION_KEY = 'meep.sesion.v1';
+    let mode = 'login';
+    const $ = id => document.getElementById(id);
+
+    function showError(message){ $('error').textContent=message; $('error').classList.add('show'); }
+    function clearError(){ $('error').textContent=''; $('error').classList.remove('show'); }
+    function readAccounts(){ try { const value=JSON.parse(localStorage.getItem(KEY)||'[]'); return Array.isArray(value)?value:[]; } catch(e){ return []; } }
+    function enter(session){ localStorage.setItem(SESSION_KEY,JSON.stringify(session)); location.href=APP_URL; }
+
+    function setMode(next){
+      mode=next; clearError();
+      const registering=mode==='register';
+      $('loginTab').setAttribute('aria-selected',String(!registering));
+      $('registerTab').setAttribute('aria-selected',String(registering));
+      $('title').textContent=registering?'Crear cuenta':'Iniciar sesión';
+      $('subtitle').textContent=registering?'Guarda tu cuenta en este dispositivo':'Accede a tu medidor de pH';
+      $('nameField').hidden=!registering;
+      $('password').autocomplete=registering?'new-password':'current-password';
+      $('submit').textContent=registering?'Crear cuenta':'Ingresar';
+    }
+
+    $('loginTab').addEventListener('click',()=>setMode('login'));
+    $('registerTab').addEventListener('click',()=>setMode('register'));
+    $('demo').addEventListener('click',()=>enter({demo:true,name:'Invitado'}));
+
+    $('authForm').addEventListener('submit',event=>{
+      event.preventDefault(); clearError();
+      const email=$('email').value.trim().toLowerCase();
+      const password=$('password').value;
+      const name=$('name').value.trim();
+      if(!email||!password){ showError('Completa el correo y la contraseña.'); return; }
+      const accounts=readAccounts();
+      if(mode==='register'){
+        if(!name){ showError('Escribe tu nombre.'); return; }
+        if(accounts.some(account=>account.email===email)){ showError('Ya existe una cuenta con este correo.'); return; }
+        accounts.push({name,email,password});
+        try { localStorage.setItem(KEY,JSON.stringify(accounts)); enter({name,email,demo:false}); }
+        catch(e){ showError('No se pudo guardar la cuenta en este navegador.'); }
+      }else{
+        const account=accounts.find(item=>item.email===email&&item.password===password);
+        if(!account){ showError('Correo o contraseña incorrectos.'); return; }
+        enter({name:account.name,email,demo:false});
+      }
+    });
+
+    try {
+      const session=JSON.parse(localStorage.getItem(SESSION_KEY)||'null');
+      if(session){ location.replace(APP_URL); }
+    } catch(e) {}
+  </script>
+</body>
+</html>
