@@ -212,4 +212,7 @@ set
   phone_change = coalesce(phone_change, ''),
   phone_change_token = coalesce(phone_change_token, ''),
   reauthentication_token = coalesce(reauthentication_token, '')
-where email = 'institutodecomercioinsucoabg@meep.pemi';
+where email in (
+  'institutodecomercioinsucoabg@meeppemi.com',
+  'institutodecomercioinsucoabg@meep.pemi'
+);

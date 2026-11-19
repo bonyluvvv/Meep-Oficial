@@ -50,7 +50,7 @@ export function normalizeUsuario(raw: string): string {
 }
 
 export function buildInternalAuthEmail(usuario: string): string {
-  return `${normalizeUsuario(usuario)}@meep.pemi`;
+  return `${normalizeUsuario(usuario)}@meeppemi.com`;
 }
 
 export async function getEstablishmentProfile(
