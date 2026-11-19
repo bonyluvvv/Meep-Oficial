@@ -7,7 +7,20 @@ import type {
 } from '../types/meep';
 import {DEFAULT_ALIMENTOS} from './meepCore';
 
-const supabaseUrl = (import.meta.env.VITE_SUPABASE_URL as string | undefined)?.trim() || '';
+function normalizeSupabaseUrl(raw: string | undefined): string {
+  const trimmed = raw?.trim() || '';
+  if (!trimmed) return '';
+  try {
+    const parsed = new URL(trimmed);
+    return parsed.origin;
+  } catch {
+    return trimmed.replace(/\/+(rest|auth)\/v1.*$/i, '').replace(/\/+$/, '');
+  }
+}
+
+const supabaseUrl = normalizeSupabaseUrl(
+  import.meta.env.VITE_SUPABASE_URL as string | undefined,
+);
 const supabaseAnonKey =
   (import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined)?.trim() || '';
 
