@@ -5,63 +5,80 @@ interface BeforeInstallPromptEvent extends Event {
   userChoice: Promise<{outcome: 'accepted' | 'dismissed'; platform: string}>;
 }
 
+// Captura global inmediata antes de que React termine de montar
+let globalDeferredPrompt: BeforeInstallPromptEvent | null = null;
+let globalInstalled = false;
+const listeners = new Set<() => void>();
+
+function notifyListeners() {
+  listeners.forEach((cb) => cb());
+}
+
+if (typeof window !== 'undefined') {
+  globalInstalled =
+    window.matchMedia('(display-mode: standalone)').matches ||
+    (window.navigator as unknown as {standalone?: boolean}).standalone === true;
+
+  window.addEventListener('beforeinstallprompt', (e: Event) => {
+    e.preventDefault();
+    globalDeferredPrompt = e as BeforeInstallPromptEvent;
+    notifyListeners();
+  });
+
+  window.addEventListener('appinstalled', () => {
+    globalInstalled = true;
+    globalDeferredPrompt = null;
+    notifyListeners();
+  });
+}
+
+export function initPWAInstallListener(): void {
+  // Referencia explícita desde main.tsx para garantizar registro temprano del listener
+}
+
 export function usePWAInstall() {
-  const [deferredPrompt, setDeferredPrompt] =
-    useState<BeforeInstallPromptEvent | null>(null);
-  const [isInstalled, setIsInstalled] = useState(false);
+  const [, setTick] = useState(0);
   const [isIOS, setIsIOS] = useState(false);
+  const [isInAppBrowser, setIsInAppBrowser] = useState(false);
 
   useEffect(() => {
-    const isStandalone =
-      window.matchMedia('(display-mode: standalone)').matches ||
-      (window.navigator as unknown as {standalone?: boolean}).standalone ===
-        true;
-    setIsInstalled(isStandalone);
-
     const ua = window.navigator.userAgent.toLowerCase();
     const isIOSDevice =
       /iphone|ipad|ipod/.test(ua) ||
       (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
     setIsIOS(isIOSDevice);
 
-    const handleBeforeInstallPrompt = (e: Event) => {
-      e.preventDefault();
-      setDeferredPrompt(e as BeforeInstallPromptEvent);
-    };
-
-    const handleAppInstalled = () => {
-      setIsInstalled(true);
-      setDeferredPrompt(null);
-    };
-
-    window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
-    window.addEventListener('appinstalled', handleAppInstalled);
-
-    return () => {
-      window.removeEventListener(
-        'beforeinstallprompt',
-        handleBeforeInstallPrompt,
+    const inApp =
+      /fban|fbav|instagram|whatsapp|line|micromessenger|tiktok|musical_ly|snapchat/.test(
+        ua,
       );
-      window.removeEventListener('appinstalled', handleAppInstalled);
+    setIsInAppBrowser(inApp);
+
+    const onUpdate = () => setTick((n) => n + 1);
+    listeners.add(onUpdate);
+    return () => {
+      listeners.delete(onUpdate);
     };
   }, []);
 
   const install = async () => {
-    if (!deferredPrompt) return false;
-    await deferredPrompt.prompt();
-    const {outcome} = await deferredPrompt.userChoice;
+    if (!globalDeferredPrompt) return false;
+    await globalDeferredPrompt.prompt();
+    const {outcome} = await globalDeferredPrompt.userChoice;
     if (outcome === 'accepted') {
-      setIsInstalled(true);
-      setDeferredPrompt(null);
+      globalInstalled = true;
+      globalDeferredPrompt = null;
+      notifyListeners();
       return true;
     }
     return false;
   };
 
   return {
-    isInstallable: Boolean(deferredPrompt),
-    isInstalled,
+    isInstallable: Boolean(globalDeferredPrompt),
+    isInstalled: globalInstalled,
     isIOS,
+    isInAppBrowser,
     install,
   };
 }

@@ -9,7 +9,8 @@ interface PWAInstallButtonProps {
 export const PWAInstallButton: React.FC<PWAInstallButtonProps> = ({
   variant = 'header',
 }) => {
-  const {isInstallable, isInstalled, isIOS, install} = usePWAInstall();
+  const {isInstallable, isInstalled, isIOS, isInAppBrowser, install} =
+    usePWAInstall();
   const [showGuide, setShowGuide] = useState(false);
 
   if (isInstalled) {
@@ -18,8 +19,8 @@ export const PWAInstallButton: React.FC<PWAInstallButtonProps> = ({
 
   const handleAction = async () => {
     if (isInstallable) {
-      await install();
-      return;
+      const ok = await install();
+      if (ok) return;
     }
     setShowGuide(true);
   };
@@ -77,6 +78,15 @@ export const PWAInstallButton: React.FC<PWAInstallButtonProps> = ({
               </button>
             </div>
 
+            {isInAppBrowser && (
+              <div className="mt-3 rounded-2xl border border-[#F4A261] bg-[#FDEEDF] p-3 text-xs font-semibold text-[#263238]">
+                Abriste el enlace desde una app (WhatsApp, Instagram, etc.).
+                Toca el menú <strong>⋮</strong> o compartir y elige{' '}
+                <strong>Abrir en Chrome / Safari</strong> para poder instalar
+                MEEP.
+              </div>
+            )}
+
             {isIOS ? (
               <ol className="mt-4 space-y-3 text-sm text-[#263238]">
                 <li className="flex items-start gap-2.5">
@@ -84,11 +94,12 @@ export const PWAInstallButton: React.FC<PWAInstallButtonProps> = ({
                     1
                   </span>
                   <span>
-                    Toca el botón{' '}
+                    Asegúrate de estar en <strong>Safari</strong> y toca el
+                    botón{' '}
                     <strong className="inline-flex items-center gap-1">
                       Compartir <Share className="h-3.5 w-3.5" />
                     </strong>{' '}
-                    en la barra inferior de Safari.
+                    en la barra inferior.
                   </span>
                 </li>
                 <li className="flex items-start gap-2.5">
@@ -117,8 +128,8 @@ export const PWAInstallButton: React.FC<PWAInstallButtonProps> = ({
                     1
                   </span>
                   <span>
-                    Abre esta aplicación en <strong>Google Chrome</strong> en tu
-                    teléfono Android.
+                    Abre esta página directamente en{' '}
+                    <strong>Google Chrome</strong> en tu celular Android.
                   </span>
                 </li>
                 <li className="flex items-start gap-2.5">
@@ -136,8 +147,8 @@ export const PWAInstallButton: React.FC<PWAInstallButtonProps> = ({
                     3
                   </span>
                   <span>
-                    Quedará instalada con el ícono de MEEP y conexión Bluetooth
-                    directa al dispositivo.
+                    Se descargará en tu teléfono con el ícono de{' '}
+                    <strong>MEEP</strong> y abrirá directo la App Bluetooth.
                   </span>
                 </li>
               </ol>
