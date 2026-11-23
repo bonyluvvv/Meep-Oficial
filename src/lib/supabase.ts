@@ -1,13 +1,17 @@
 import {createClient, type SupabaseClient} from '@supabase/supabase-js';
 import type {
   EstablishmentProfile,
-  EstablishmentType,
   FoodDefinition,
+  IntegrationRequestPayload,
   MeasurementRecord,
+  MeepChannel,
 } from '../types/meep';
 import {DEFAULT_ALIMENTOS} from './meepCore';
 
-const SESSION_TOKEN_KEY = 'meep.session.token.v1';
+const SESSION_TOKEN_KEYS: Record<MeepChannel, string> = {
+  web: 'meep.session.token.web.v1',
+  app: 'meep.session.token.app.v1',
+};
 
 function normalizeSupabaseUrl(raw: string | undefined): string {
   const trimmed = (raw?.trim() || '').replace(/^["']+|["']+$/g, '');
@@ -51,47 +55,50 @@ export function normalizeUsuario(raw: string): string {
     .replace(/[^a-z0-9._-]/g, '');
 }
 
-function getStoredToken(): string | null {
+function getStoredToken(channel: MeepChannel): string | null {
   try {
-    return localStorage.getItem(SESSION_TOKEN_KEY);
+    return localStorage.getItem(SESSION_TOKEN_KEYS[channel]);
   } catch {
     return null;
   }
 }
 
-function setStoredToken(token: string | null): void {
+function setStoredToken(channel: MeepChannel, token: string | null): void {
   try {
     if (token) {
-      localStorage.setItem(SESSION_TOKEN_KEY, token);
+      localStorage.setItem(SESSION_TOKEN_KEYS[channel], token);
     } else {
-      localStorage.removeItem(SESSION_TOKEN_KEY);
+      localStorage.removeItem(SESSION_TOKEN_KEYS[channel]);
     }
   } catch {
     // ignore storage errors
   }
 }
 
-function mapRpcError(message: string, usuarioClean?: string): string {
+function mapRpcError(message: string): string {
   const upper = message.toUpperCase();
   const lower = message.toLowerCase();
 
-  if (upper.includes('CREDENCIALES_INVALIDAS')) {
-    return 'Usuario o contraseña incorrectos. Verifica tus datos o crea tu cuenta en "Registrarse".';
+  if (upper.includes('SOLO_APP_MANIPULADOR')) {
+    return 'Ese usuario pertenece a manipuladores de alimentos. Úsalo en la App MEEP para medir.';
   }
-  if (upper.includes('USUARIO_DUPLICADO')) {
-    return `El usuario "${usuarioClean || ''}" ya está registrado. Cambia a "Iniciar sesión".`;
+  if (upper.includes('SOLO_WEB_ADMIN')) {
+    return 'Esa cuenta es de administrador. Úsala en el Portal Web para revisar el historial.';
+  }
+  if (upper.includes('CREDENCIALES_INVALIDAS')) {
+    return 'Usuario o contraseña incorrectos. Verifica las credenciales asignadas a tu institución.';
   }
   if (upper.includes('NOMBRE_INVALIDO')) {
-    return 'Ingresa el nombre completo del establecimiento.';
+    return 'Ingresa el nombre completo de la institución.';
   }
-  if (upper.includes('USUARIO_INVALIDO')) {
-    return 'El usuario debe tener entre 3 y 50 caracteres (solo letras, números, punto, guion o guion bajo).';
+  if (upper.includes('CONTACTO_INVALIDO')) {
+    return 'Ingresa el nombre de la persona encargada o de contacto.';
   }
-  if (upper.includes('PASSWORD_CORTA')) {
-    return 'La contraseña debe tener al menos 6 caracteres.';
+  if (upper.includes('CORREO_INVALIDO')) {
+    return 'Ingresa un correo electrónico válido para poder enviarte los datos de acceso.';
   }
   if (upper.includes('SESION_INVALIDA')) {
-    return 'Tu sesión expiró. Vuelve a iniciar sesión con el usuario de tu establecimiento.';
+    return 'Tu sesión expiró. Vuelve a iniciar sesión.';
   }
   if (
     lower.includes('could not find the function') ||
@@ -110,9 +117,11 @@ function mapRpcError(message: string, usuarioClean?: string): string {
   return message || 'No se pudo completar la operación en Supabase.';
 }
 
-export async function restoreSession(): Promise<EstablishmentProfile | null> {
+export async function restoreSession(
+  channel: MeepChannel,
+): Promise<EstablishmentProfile | null> {
   if (!supabase) return null;
-  const token = getStoredToken();
+  const token = getStoredToken(channel);
   if (!token) return null;
 
   const {data, error} = await supabase.rpc('meep_perfil', {
@@ -121,7 +130,7 @@ export async function restoreSession(): Promise<EstablishmentProfile | null> {
 
   if (error || !data) {
     if (!error) {
-      setStoredToken(null);
+      setStoredToken(channel, null);
     }
     return null;
   }
@@ -132,6 +141,7 @@ export async function restoreSession(): Promise<EstablishmentProfile | null> {
 export async function signInEstablishment(
   identificador: string,
   password: string,
+  channel: MeepChannel,
 ): Promise<{profile: EstablishmentProfile; userId: string}> {
   if (!supabase) {
     throw new Error(
@@ -147,6 +157,7 @@ export async function signInEstablishment(
   const {data, error} = await supabase.rpc('meep_login', {
     p_identificador: clean,
     p_password: password,
+    p_canal: channel,
   });
 
   if (error || !data) {
@@ -154,59 +165,39 @@ export async function signInEstablishment(
   }
 
   const res = data as {token: string; profile: EstablishmentProfile};
-  setStoredToken(res.token);
+  setStoredToken(channel, res.token);
   return {userId: res.profile.id, profile: res.profile};
 }
 
-export async function registerEstablishment(params: {
-  nombre: string;
-  usuario: string;
-  tipo: EstablishmentType;
-  correoContacto?: string;
-  password: string;
-}): Promise<{profile: EstablishmentProfile; userId: string}> {
+export async function submitIntegrationRequest(
+  payload: IntegrationRequestPayload,
+): Promise<{id: string; estado: string}> {
   if (!supabase) {
     throw new Error(
       'Falta configurar VITE_SUPABASE_URL y VITE_SUPABASE_ANON_KEY en el proyecto.',
     );
   }
 
-  const nombre = params.nombre.trim();
-  const usuarioClean = normalizeUsuario(params.usuario);
-  const correoContacto = params.correoContacto?.trim() || '';
-
-  if (nombre.length < 2) {
-    throw new Error('Ingresa el nombre completo del establecimiento.');
-  }
-  if (!/^[a-z0-9._-]{3,50}$/.test(usuarioClean)) {
-    throw new Error(
-      'El usuario debe tener entre 3 y 50 caracteres (solo letras, números, punto, guion o guion bajo).',
-    );
-  }
-  if (params.password.length < 6) {
-    throw new Error('La contraseña debe tener al menos 6 caracteres.');
-  }
-
-  const {data, error} = await supabase.rpc('meep_registrar', {
-    p_nombre: nombre,
-    p_usuario: usuarioClean,
-    p_tipo: params.tipo,
-    p_correo_contacto: correoContacto || null,
-    p_password: params.password,
+  const {data, error} = await supabase.rpc('meep_enviar_solicitud', {
+    p_nombre_institucion: payload.nombreInstitucion.trim(),
+    p_tipo: payload.tipo,
+    p_nombre_contacto: payload.nombreContacto.trim(),
+    p_correo_contacto: payload.correoContacto.trim().toLowerCase(),
+    p_telefono: payload.telefono?.trim() || null,
+    p_ciudad_comuna: payload.ciudadComuna?.trim() || null,
+    p_observaciones: payload.observaciones?.trim() || null,
   });
 
   if (error || !data) {
-    throw new Error(mapRpcError(error?.message || '', usuarioClean));
+    throw new Error(mapRpcError(error?.message || ''));
   }
 
-  const res = data as {token: string; profile: EstablishmentProfile};
-  setStoredToken(res.token);
-  return {userId: res.profile.id, profile: res.profile};
+  return data as {id: string; estado: string};
 }
 
-export async function signOutEstablishment(): Promise<void> {
-  const token = getStoredToken();
-  setStoredToken(null);
+export async function signOutEstablishment(channel: MeepChannel): Promise<void> {
+  const token = getStoredToken(channel);
+  setStoredToken(channel, null);
   if (!supabase || !token) return;
   try {
     await supabase.rpc('meep_logout', {p_token: token});
@@ -279,10 +270,10 @@ function mapMedicion(row: RawMedicionRow): MeasurementRecord {
 }
 
 export async function fetchMediciones(
-  _establecimientoId: string,
+  channel: MeepChannel,
 ): Promise<MeasurementRecord[]> {
   if (!supabase) return [];
-  const token = getStoredToken();
+  const token = getStoredToken(channel);
   if (!token) return [];
 
   const {data, error} = await supabase.rpc('meep_listar_mediciones', {
@@ -300,11 +291,12 @@ export async function fetchMediciones(
 
 export async function insertMedicion(
   payload: Omit<MeasurementRecord, 'id'>,
+  channel: MeepChannel = 'app',
 ): Promise<MeasurementRecord> {
   if (!supabase) {
     throw new Error('Supabase no configurado.');
   }
-  const token = getStoredToken();
+  const token = getStoredToken(channel);
   if (!token) {
     throw new Error('Tu sesión expiró. Vuelve a iniciar sesión.');
   }
@@ -333,9 +325,12 @@ export async function insertMedicion(
   return mapMedicion(data as RawMedicionRow);
 }
 
-export async function deleteMedicion(id: string): Promise<void> {
+export async function deleteMedicion(
+  id: string,
+  channel: MeepChannel = 'app',
+): Promise<void> {
   if (!supabase) return;
-  const token = getStoredToken();
+  const token = getStoredToken(channel);
   if (!token) return;
 
   const {error} = await supabase.rpc('meep_eliminar_medicion', {

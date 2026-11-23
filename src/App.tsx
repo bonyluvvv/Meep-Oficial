@@ -60,7 +60,12 @@ function detectInitialSurface(): AppSurface {
 export default function App() {
   const [surface, setSurface] = useState<AppSurface>(detectInitialSurface);
   const [authReady, setAuthReady] = useState(false);
-  const [profile, setProfile] = useState<EstablishmentProfile | null>(null);
+  const [webProfile, setWebProfile] = useState<EstablishmentProfile | null>(
+    null,
+  );
+  const [appProfile, setAppProfile] = useState<EstablishmentProfile | null>(
+    null,
+  );
   const [localOnlyMode, setLocalOnlyMode] = useState(false);
 
   const [tab, setTab] = useState<MainTab>('medir');
@@ -83,8 +88,10 @@ export default function App() {
     }
   });
 
-  const [registros, setRegistros] = useState<MeasurementRecord[]>([]);
-  const [loadingHistory, setLoadingHistory] = useState(false);
+  const [webRegistros, setWebRegistros] = useState<MeasurementRecord[]>([]);
+  const [loadingWebHistory, setLoadingWebHistory] = useState(false);
+  const [appRegistros, setAppRegistros] = useState<MeasurementRecord[]>([]);
+  const [loadingAppHistory, setLoadingAppHistory] = useState(false);
   const [lastResult, setLastResult] = useState<MeasurementRecord | null>(null);
   const [saving, setSaving] = useState(false);
   const [savedToCloud, setSavedToCloud] = useState(false);
@@ -140,23 +147,32 @@ export default function App() {
     }
   }, []);
 
-  const syncHistory = useCallback(
-    async (establecimientoId: string) => {
-      setLoadingHistory(true);
-      try {
-        const items = await fetchMediciones(establecimientoId);
-        setRegistros(items);
-        saveLocalHistory(items);
-      } catch {
-        setRegistros(loadLocalHistory());
-      } finally {
-        setLoadingHistory(false);
-      }
-    },
-    [loadLocalHistory, saveLocalHistory],
-  );
+  const syncWebHistory = useCallback(async () => {
+    setLoadingWebHistory(true);
+    try {
+      const items = await fetchMediciones('web');
+      setWebRegistros(items);
+    } catch {
+      setWebRegistros([]);
+    } finally {
+      setLoadingWebHistory(false);
+    }
+  }, []);
 
-  // Carga inicial de sesión y catálogo de alimentos
+  const syncAppHistory = useCallback(async () => {
+    setLoadingAppHistory(true);
+    try {
+      const items = await fetchMediciones('app');
+      setAppRegistros(items);
+      saveLocalHistory(items);
+    } catch {
+      setAppRegistros(loadLocalHistory());
+    } finally {
+      setLoadingAppHistory(false);
+    }
+  }, [loadLocalHistory, saveLocalHistory]);
+
+  // Carga inicial de sesiones (web admin y app manipuladores) y catálogo de alimentos
   useEffect(() => {
     let active = true;
 
@@ -174,10 +190,19 @@ export default function App() {
       }
 
       try {
-        const p = await restoreSession();
-        if (p && active) {
-          setProfile(p);
-          await syncHistory(p.id);
+        const [webP, appP] = await Promise.all([
+          restoreSession('web'),
+          restoreSession('app'),
+        ]);
+        if (active) {
+          if (webP) {
+            setWebProfile(webP);
+            await syncWebHistory();
+          }
+          if (appP) {
+            setAppProfile(appP);
+            await syncAppHistory();
+          }
         }
       } catch {
         // sin sesión activa
@@ -191,7 +216,7 @@ export default function App() {
     return () => {
       active = false;
     };
-  }, [syncHistory]);
+  }, [syncAppHistory, syncWebHistory]);
 
   // Escucha eventos Bluetooth en vivo
   useEffect(() => {
@@ -269,7 +294,7 @@ export default function App() {
     const interpretation = interpretarPh(selectedFood, data.ph, alimentos);
     const draftRecord: MeasurementRecord = {
       id: `local-${Date.now()}`,
-      establecimiento_id: profile?.id,
+      establecimiento_id: appProfile?.id,
       alimento_clave: selectedFood,
       ph: data.ph,
       temperatura: data.temperatura,
@@ -288,31 +313,37 @@ export default function App() {
     setSavedToCloud(false);
     setSaveError('');
 
-    if (profile && isSupabaseConfigured) {
+    if (appProfile && isSupabaseConfigured) {
       setSaving(true);
       try {
-        const saved = await insertMedicion({
-          establecimiento_id: profile.id,
-          alimento_clave: draftRecord.alimento_clave,
-          ph: draftRecord.ph,
-          temperatura: draftRecord.temperatura,
-          estado: draftRecord.estado,
-          subestado: draftRecord.subestado,
-          led_color: draftRecord.led_color,
-          motivo: draftRecord.motivo,
-          manipulador: draftRecord.manipulador,
-          dispositivo_codigo: draftRecord.dispositivo_codigo,
-          origen: draftRecord.origen,
-          medido_at: draftRecord.medido_at,
-        });
+        const saved = await insertMedicion(
+          {
+            establecimiento_id: appProfile.id,
+            alimento_clave: draftRecord.alimento_clave,
+            ph: draftRecord.ph,
+            temperatura: draftRecord.temperatura,
+            estado: draftRecord.estado,
+            subestado: draftRecord.subestado,
+            led_color: draftRecord.led_color,
+            motivo: draftRecord.motivo,
+            manipulador: draftRecord.manipulador,
+            dispositivo_codigo: draftRecord.dispositivo_codigo,
+            origen: draftRecord.origen,
+            medido_at: draftRecord.medido_at,
+          },
+          'app',
+        );
         setLastResult(saved);
-        const updated = [saved, ...registros];
-        setRegistros(updated);
+        const updated = [saved, ...appRegistros];
+        setAppRegistros(updated);
         saveLocalHistory(updated);
         setSavedToCloud(true);
+        if (webProfile && webProfile.id === appProfile.id) {
+          void syncWebHistory();
+        }
       } catch (err) {
-        const updated = [draftRecord, ...registros];
-        setRegistros(updated);
+        const updated = [draftRecord, ...appRegistros];
+        setAppRegistros(updated);
         saveLocalHistory(updated);
         setSaveError(
           err instanceof Error
@@ -323,39 +354,45 @@ export default function App() {
         setSaving(false);
       }
     } else {
-      const updated = [draftRecord, ...registros];
-      setRegistros(updated);
+      const updated = [draftRecord, ...appRegistros];
+      setAppRegistros(updated);
       saveLocalHistory(updated);
     }
   };
 
   const handleRetrySave = async () => {
-    if (!lastResult || !profile || !isSupabaseConfigured) return;
+    if (!lastResult || !appProfile || !isSupabaseConfigured) return;
     setSaving(true);
     setSaveError('');
     try {
-      const saved = await insertMedicion({
-        establecimiento_id: profile.id,
-        alimento_clave: lastResult.alimento_clave,
-        ph: lastResult.ph,
-        temperatura: lastResult.temperatura,
-        estado: lastResult.estado,
-        subestado: lastResult.subestado,
-        led_color: lastResult.led_color,
-        motivo: lastResult.motivo,
-        manipulador: lastResult.manipulador,
-        dispositivo_codigo: lastResult.dispositivo_codigo,
-        origen: lastResult.origen,
-        medido_at: lastResult.medido_at,
-      });
+      const saved = await insertMedicion(
+        {
+          establecimiento_id: appProfile.id,
+          alimento_clave: lastResult.alimento_clave,
+          ph: lastResult.ph,
+          temperatura: lastResult.temperatura,
+          estado: lastResult.estado,
+          subestado: lastResult.subestado,
+          led_color: lastResult.led_color,
+          motivo: lastResult.motivo,
+          manipulador: lastResult.manipulador,
+          dispositivo_codigo: lastResult.dispositivo_codigo,
+          origen: lastResult.origen,
+          medido_at: lastResult.medido_at,
+        },
+        'app',
+      );
       setLastResult(saved);
       const updated = [
         saved,
-        ...registros.filter((r) => r.id !== lastResult.id),
+        ...appRegistros.filter((r) => r.id !== lastResult.id),
       ];
-      setRegistros(updated);
+      setAppRegistros(updated);
       saveLocalHistory(updated);
       setSavedToCloud(true);
+      if (webProfile && webProfile.id === appProfile.id) {
+        void syncWebHistory();
+      }
       showToast('Medición sincronizada con Supabase');
     } catch (err) {
       setSaveError(
@@ -367,21 +404,30 @@ export default function App() {
   };
 
   const handleDeleteRecord = async (id: string) => {
-    if (profile && isSupabaseConfigured && !id.startsWith('local-')) {
-      await deleteMedicion(id);
+    if (appProfile && isSupabaseConfigured && !id.startsWith('local-')) {
+      await deleteMedicion(id, 'app');
     }
-    const updated = registros.filter((r) => r.id !== id);
-    setRegistros(updated);
+    const updated = appRegistros.filter((r) => r.id !== id);
+    setAppRegistros(updated);
     saveLocalHistory(updated);
+    if (webProfile && appProfile && webProfile.id === appProfile.id) {
+      void syncWebHistory();
+    }
     showToast('Registro eliminado');
   };
 
-  const handleLogout = async () => {
+  const handleWebLogout = async () => {
+    await signOutEstablishment('web');
+    setWebProfile(null);
+    setWebRegistros([]);
+  };
+
+  const handleAppLogout = async () => {
     handleDisconnectBt();
-    await signOutEstablishment();
-    setProfile(null);
+    await signOutEstablishment('app');
+    setAppProfile(null);
     setLocalOnlyMode(false);
-    setRegistros([]);
+    setAppRegistros([]);
     setLastResult(null);
     setMeasureStep('home');
     setTab('medir');
@@ -405,18 +451,17 @@ export default function App() {
       <>
         <OfflineIndicator />
         <WebLandingPortal
-          profile={profile}
+          profile={webProfile}
           alimentos={alimentos}
-          registros={registros}
-          loadingHistory={loadingHistory}
+          registros={webRegistros}
+          loadingHistory={loadingWebHistory}
           onAuthenticated={async (est) => {
-            setProfile(est);
-            setLocalOnlyMode(false);
-            await syncHistory(est.id);
+            setWebProfile(est);
+            await syncWebHistory();
           }}
-          onLogout={handleLogout}
+          onLogout={handleWebLogout}
           onRefreshHistory={() => {
-            if (profile) void syncHistory(profile.id);
+            if (webProfile) void syncWebHistory();
           }}
           onOpenApp={() => openSurface('app')}
         />
@@ -424,20 +469,28 @@ export default function App() {
     );
   }
 
-  if (!profile && !localOnlyMode) {
+  if (!appProfile && !localOnlyMode) {
     return (
       <AuthScreen
         onAuthenticated={async (est) => {
-          setProfile(est);
+          setAppProfile(est);
           setMeasureStep('home');
           setTab('medir');
-          await syncHistory(est.id);
+          await syncAppHistory();
         }}
         onContinueOffline={() => {
           setLocalOnlyMode(true);
-          setRegistros(loadLocalHistory());
+          setAppRegistros(loadLocalHistory());
         }}
         onBackToWeb={() => openSurface('web')}
+        onGoRequestAccess={() => {
+          openSurface('web');
+          window.setTimeout(() => {
+            document
+              .getElementById('portal')
+              ?.scrollIntoView({behavior: 'smooth'});
+          }, 80);
+        }}
       />
     );
   }
@@ -489,7 +542,7 @@ export default function App() {
                   MEEP
                 </span>
                 <span className="text-[11px] font-semibold text-white/75 truncate block">
-                  {profile ? profile.nombre : 'Modo local'}
+                  {appProfile ? appProfile.nombre : 'Modo local'}
                 </span>
               </div>
             )}
@@ -541,7 +594,7 @@ export default function App() {
             <PWAInstallButton variant="header" />
             <button
               type="button"
-              onClick={handleLogout}
+              onClick={handleAppLogout}
               title="Cerrar sesión"
               aria-label="Cerrar sesión"
               className="flex h-10 items-center gap-1.5 rounded-xl bg-white/12 px-3 text-xs font-bold text-white hover:bg-white/20 whitespace-nowrap shrink-0"
@@ -589,11 +642,11 @@ export default function App() {
 
               {tab === 'historial' && (
                 <HistoryView
-                  registros={registros}
+                  registros={appRegistros}
                   alimentos={alimentos}
-                  loading={loadingHistory}
+                  loading={loadingAppHistory}
                   onRefresh={() => {
-                    if (profile) void syncHistory(profile.id);
+                    if (appProfile) void syncAppHistory();
                   }}
                   onDelete={handleDeleteRecord}
                   onGoMeasure={() => {
@@ -623,14 +676,14 @@ export default function App() {
                 </span>
                 <div className="min-w-0">
                   <div className="text-xs font-semibold text-[#55656D]">
-                    Establecimiento activo
+                    Sesión de manipuladores
                   </div>
                   <div className="font-display text-base font-bold text-[#17324D] truncate">
-                    {profile ? profile.nombre : 'Modo local'}
+                    {appProfile ? appProfile.nombre : 'Modo local'}
                   </div>
-                  {profile && (
+                  {appProfile && (
                     <div className="text-xs text-[#55656D] truncate">
-                      @{profile.usuario}
+                      @{appProfile.usuario}
                     </div>
                   )}
                 </div>
@@ -639,7 +692,7 @@ export default function App() {
               <div className="grid grid-cols-3 gap-2 pt-2 border-t border-[#E1E3DA] text-center">
                 <div className="rounded-2xl bg-[#F7F7F2] p-2.5">
                   <div className="font-display text-xl font-bold text-[#17324D] tabular-nums">
-                    {registros.length}
+                    {appRegistros.length}
                   </div>
                   <div className="text-[11px] font-semibold text-[#55656D]">
                     Registros
@@ -647,7 +700,7 @@ export default function App() {
                 </div>
                 <div className="rounded-2xl bg-[#E5F0E6] p-2.5">
                   <div className="font-display text-xl font-bold text-[#2E7D32] tabular-nums">
-                    {registros.filter((r) => r.estado === 'in').length}
+                    {appRegistros.filter((r) => r.estado === 'in').length}
                   </div>
                   <div className="text-[11px] font-semibold text-[#2E7D32]">
                     En rango
@@ -655,7 +708,7 @@ export default function App() {
                 </div>
                 <div className="rounded-2xl bg-[#FAE8E8] p-2.5">
                   <div className="font-display text-xl font-bold text-[#C62828] tabular-nums">
-                    {registros.filter((r) => r.estado === 'out').length}
+                    {appRegistros.filter((r) => r.estado === 'out').length}
                   </div>
                   <div className="text-[11px] font-semibold text-[#C62828]">
                     Alerta

@@ -12,6 +12,10 @@ export type LedColor = 'verde' | 'rojo' | 'apagado';
 
 export type EstablishmentType = 'establecimiento' | 'casino_junaeb' | 'pyme';
 
+export type MeepRole = 'admin' | 'manipulador';
+
+export type MeepChannel = 'web' | 'app';
+
 export interface FoodDefinition {
   clave: FoodKey;
   nombre: string;
@@ -29,9 +33,21 @@ export interface EstablishmentProfile {
   id: string;
   nombre: string;
   usuario: string;
+  usuario_manipulador?: string | null;
   correo_contacto: string | null;
   tipo: EstablishmentType;
+  rol?: MeepRole;
   created_at?: string;
+}
+
+export interface IntegrationRequestPayload {
+  nombreInstitucion: string;
+  tipo: EstablishmentType;
+  nombreContacto: string;
+  correoContacto: string;
+  telefono?: string;
+  ciudadComuna?: string;
+  observaciones?: string;
 }
 
 export interface MeasurementRecord {

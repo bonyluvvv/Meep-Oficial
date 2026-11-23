@@ -1,35 +1,25 @@
 import React, {useState} from 'react';
 import {AlertCircle, ArrowLeft, Eye, EyeOff} from 'lucide-react';
-import {
-  isSupabaseConfigured,
-  normalizeUsuario,
-  registerEstablishment,
-  signInEstablishment,
-} from '../lib/supabase';
-import type {EstablishmentProfile, EstablishmentType} from '../types/meep';
+import {isSupabaseConfigured, signInEstablishment} from '../lib/supabase';
+import type {EstablishmentProfile} from '../types/meep';
 import {PWAInstallButton} from './PWAInstallButton';
 
 interface AuthScreenProps {
   onAuthenticated: (profile: EstablishmentProfile) => void;
   onContinueOffline?: () => void;
   onBackToWeb?: () => void;
+  onGoRequestAccess?: () => void;
 }
 
 export const AuthScreen: React.FC<AuthScreenProps> = ({
   onAuthenticated,
   onContinueOffline,
   onBackToWeb,
+  onGoRequestAccess,
 }) => {
-  const [mode, setMode] = useState<'login' | 'register'>('login');
   const [identificador, setIdentificador] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-
-  const [nombre, setNombre] = useState('');
-  const [usuario, setUsuario] = useState('');
-  const [tipo, setTipo] = useState<EstablishmentType>('establecimiento');
-  const [correoContacto, setCorreoContacto] = useState('');
-
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -38,24 +28,13 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
     setError('');
     setLoading(true);
     try {
-      if (mode === 'login') {
-        const res = await signInEstablishment(identificador, password);
-        onAuthenticated(res.profile);
-      } else {
-        const res = await registerEstablishment({
-          nombre,
-          usuario,
-          tipo,
-          correoContacto,
-          password,
-        });
-        onAuthenticated(res.profile);
-      }
+      const res = await signInEstablishment(identificador, password, 'app');
+      onAuthenticated(res.profile);
     } catch (err) {
       setError(
         err instanceof Error
           ? err.message
-          : 'No se pudo completar la operación. Intenta nuevamente.',
+          : 'No se pudo iniciar sesión. Verifica los datos de tu institución.',
       );
     } finally {
       setLoading(false);
@@ -79,63 +58,23 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
       )}
 
       <section
-        aria-label="Acceso a MEEP"
+        aria-label="Acceso App MEEP para manipuladores"
         className="w-full max-w-[430px] rounded-[24px] border border-[#DDE2DC] bg-[#F7F7F2] shadow-[0_14px_40px_rgba(23,50,77,0.12)] overflow-hidden"
       >
         <header className="bg-[#17324D] text-white text-center px-5 py-7">
           <strong className="font-display text-sm tracking-[0.16em]">
-            MEEP
+            MEEP · APP DE MEDICIÓN
           </strong>
           <h1 className="font-display text-[28px] font-bold mt-2 mb-0.5 leading-tight">
-            {mode === 'login' ? 'Iniciar sesión' : 'Crear cuenta'}
+            Iniciar sesión
           </h1>
           <p className="text-sm text-white/80">
-            {mode === 'login'
-              ? 'Accede a tu medidor de pH por establecimiento'
-              : 'Registra tu establecimiento para medir y guardar historial'}
+            Ingresa con el usuario de manipuladores de tu institución para medir
+            con MEEP
           </p>
         </header>
 
         <main className="p-5 sm:p-6">
-          <div
-            className="grid grid-cols-2 gap-2 mb-4"
-            role="tablist"
-            aria-label="Opciones de acceso"
-          >
-            <button
-              type="button"
-              role="tab"
-              aria-selected={mode === 'login'}
-              onClick={() => {
-                setMode('login');
-                setError('');
-              }}
-              className={`min-h-[44px] rounded-xl text-sm font-extrabold border transition-colors ${
-                mode === 'login'
-                  ? 'bg-[#2A9D8F] text-white border-[#2A9D8F]'
-                  : 'bg-white text-[#55656D] border-[#DDE2DC]'
-              }`}
-            >
-              Iniciar sesión
-            </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={mode === 'register'}
-              onClick={() => {
-                setMode('register');
-                setError('');
-              }}
-              className={`min-h-[44px] rounded-xl text-sm font-extrabold border transition-colors ${
-                mode === 'register'
-                  ? 'bg-[#2A9D8F] text-white border-[#2A9D8F]'
-                  : 'bg-white text-[#55656D] border-[#DDE2DC]'
-              }`}
-            >
-              Registrarse
-            </button>
-          </div>
-
           {!isSupabaseConfigured && (
             <div className="mb-4 rounded-xl border border-[#F4A261] bg-[#FDEEDF] p-3 text-xs text-[#263238] space-y-2">
               <div className="flex items-start gap-2">
@@ -174,87 +113,20 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
             </div>
           )}
 
-          <form onSubmit={handleSubmit} className="space-y-3">
-            {mode === 'register' && (
-              <>
-                <label className="flex flex-col gap-1 text-sm font-extrabold text-[#263238]">
-                  <span>Nombre del establecimiento</span>
-                  <input
-                    type="text"
-                    required
-                    maxLength={80}
-                    value={nombre}
-                    onChange={(e) => setNombre(e.target.value)}
-                    placeholder="Ej. INSUCO ABG"
-                    className="w-full min-h-[50px] rounded-[13px] border border-[#DDE2DC] bg-white px-3.5 py-2.5 text-base font-normal text-[#263238] focus:border-[#2A9D8F] focus:outline-none"
-                  />
-                </label>
-
-                <label className="flex flex-col gap-1 text-sm font-extrabold text-[#263238]">
-                  <span>Usuario</span>
-                  <input
-                    type="text"
-                    required
-                    autoCapitalize="none"
-                    autoCorrect="off"
-                    value={usuario}
-                    onChange={(e) =>
-                      setUsuario(normalizeUsuario(e.target.value))
-                    }
-                    placeholder="Ej. institutodecomercioinsucoabg"
-                    className="w-full min-h-[50px] rounded-[13px] border border-[#DDE2DC] bg-white px-3.5 py-2.5 text-base font-normal text-[#263238] focus:border-[#2A9D8F] focus:outline-none"
-                  />
-                </label>
-
-                <label className="flex flex-col gap-1 text-sm font-extrabold text-[#263238]">
-                  <span>Tipo de entidad</span>
-                  <select
-                    value={tipo}
-                    onChange={(e) =>
-                      setTipo(e.target.value as EstablishmentType)
-                    }
-                    className="w-full min-h-[50px] rounded-[13px] border border-[#DDE2DC] bg-white px-3.5 py-2.5 text-base font-normal text-[#263238] focus:border-[#2A9D8F] focus:outline-none"
-                  >
-                    <option value="establecimiento">
-                      Establecimiento educacional
-                    </option>
-                    <option value="casino_junaeb">
-                      Casino escolar JUNAEB / PAE
-                    </option>
-                    <option value="pyme">
-                      PYME / Distribuidora de alimentos
-                    </option>
-                  </select>
-                </label>
-
-                <label className="flex flex-col gap-1 text-sm font-extrabold text-[#263238]">
-                  <span>Correo de contacto (opcional)</span>
-                  <input
-                    type="email"
-                    value={correoContacto}
-                    onChange={(e) => setCorreoContacto(e.target.value)}
-                    placeholder="encargado@establecimiento.cl"
-                    className="w-full min-h-[50px] rounded-[13px] border border-[#DDE2DC] bg-white px-3.5 py-2.5 text-base font-normal text-[#263238] focus:border-[#2A9D8F] focus:outline-none"
-                  />
-                </label>
-              </>
-            )}
-
-            {mode === 'login' && (
-              <label className="flex flex-col gap-1 text-sm font-extrabold text-[#263238]">
-                <span>Usuario del establecimiento</span>
-                <input
-                  type="text"
-                  required
-                  autoCapitalize="none"
-                  autoCorrect="off"
-                  value={identificador}
-                  onChange={(e) => setIdentificador(e.target.value)}
-                  placeholder="institutodecomercioinsucoabg"
-                  className="w-full min-h-[50px] rounded-[13px] border border-[#DDE2DC] bg-white px-3.5 py-2.5 text-base font-normal text-[#263238] focus:border-[#2A9D8F] focus:outline-none"
-                />
-              </label>
-            )}
+          <form onSubmit={handleSubmit} className="space-y-3.5">
+            <label className="flex flex-col gap-1 text-sm font-extrabold text-[#263238]">
+              <span>Usuario de manipulador</span>
+              <input
+                type="text"
+                required
+                autoCapitalize="none"
+                autoCorrect="off"
+                value={identificador}
+                onChange={(e) => setIdentificador(e.target.value)}
+                placeholder="insucoalimentos"
+                className="w-full min-h-[50px] rounded-[13px] border border-[#DDE2DC] bg-white px-3.5 py-2.5 text-base font-normal text-[#263238] focus:border-[#2A9D8F] focus:outline-none"
+              />
+            </label>
 
             <label className="flex flex-col gap-1 text-sm font-extrabold text-[#263238]">
               <span>Contraseña</span>
@@ -289,19 +161,28 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
               disabled={loading || !isSupabaseConfigured}
               className="w-full min-h-[52px] rounded-[14px] bg-[#17324D] text-white text-base font-extrabold hover:bg-[#10253a] disabled:opacity-45 disabled:cursor-not-allowed"
             >
-              {loading
-                ? 'Verificando…'
-                : mode === 'login'
-                  ? 'Ingresar'
-                  : 'Crear cuenta'}
+              {loading ? 'Verificando…' : 'Ingresar a medir'}
             </button>
           </form>
+
+          {onGoRequestAccess && (
+            <div className="mt-4 rounded-xl border border-[#DDE2DC] bg-white px-3.5 py-3 text-center text-xs text-[#55656D]">
+              ¿Tu institución aún no tiene credenciales MEEP?{' '}
+              <button
+                type="button"
+                onClick={onGoRequestAccess}
+                className="font-extrabold text-[#2A9D8F] hover:underline"
+              >
+                Solicitar integración en la web
+              </button>
+            </div>
+          )}
 
           {onContinueOffline && (
             <button
               type="button"
               onClick={onContinueOffline}
-              className="mt-2.5 w-full min-h-[52px] rounded-[14px] border-2 border-[#17324D] bg-white text-[#17324D] text-base font-extrabold hover:bg-[#E0F1EF]"
+              className="mt-2.5 w-full min-h-[50px] rounded-[14px] border-2 border-[#17324D] bg-white text-[#17324D] text-sm font-extrabold hover:bg-[#E0F1EF]"
             >
               Entrar sin cuenta (solo Bluetooth local)
             </button>

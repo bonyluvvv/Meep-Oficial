@@ -24,9 +24,8 @@ import {
 } from '../lib/meepCore';
 import {
   isSupabaseConfigured,
-  normalizeUsuario,
-  registerEstablishment,
   signInEstablishment,
+  submitIntegrationRequest,
 } from '../lib/supabase';
 import type {
   EstablishmentProfile,
@@ -59,15 +58,25 @@ export const WebLandingPortal: React.FC<WebLandingPortalProps> = ({
   onRefreshHistory,
   onOpenApp,
 }) => {
-  // Auth state for Portal (sigue la estética del index de acceso)
-  const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
+  // Auth & Solicitud de integración en Portal Web (solo administradores)
+  const [portalMode, setPortalMode] = useState<'login' | 'request'>('login');
   const [identificador, setIdentificador] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  const [nombre, setNombre] = useState('');
-  const [usuario, setUsuario] = useState('');
+
+  // Campos del formulario de solicitud de nueva institución
+  const [nombreInstitucion, setNombreInstitucion] = useState('');
   const [tipo, setTipo] = useState<EstablishmentType>('establecimiento');
+  const [nombreContacto, setNombreContacto] = useState('');
   const [correoContacto, setCorreoContacto] = useState('');
+  const [telefono, setTelefono] = useState('');
+  const [ciudadComuna, setCiudadComuna] = useState('');
+  const [observaciones, setObservaciones] = useState('');
+  const [requestSent, setRequestSent] = useState<{
+    institucion: string;
+    correo: string;
+  } | null>(null);
+
   const [authLoading, setAuthLoading] = useState(false);
   const [authError, setAuthError] = useState('');
 
@@ -78,29 +87,40 @@ export const WebLandingPortal: React.FC<WebLandingPortalProps> = ({
   const [foodFilter, setFoodFilter] = useState<string>('all');
   const [searchTerm, setSearchTerm] = useState('');
 
-  const handleAuthSubmit = async (e: React.FormEvent) => {
+  const handlePortalSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setAuthError('');
     setAuthLoading(true);
     try {
-      if (authMode === 'login') {
-        const res = await signInEstablishment(identificador, password);
+      if (portalMode === 'login') {
+        const res = await signInEstablishment(identificador, password, 'web');
         await onAuthenticated(res.profile);
       } else {
-        const res = await registerEstablishment({
-          nombre,
-          usuario,
+        await submitIntegrationRequest({
+          nombreInstitucion,
           tipo,
+          nombreContacto,
           correoContacto,
-          password,
+          telefono,
+          ciudadComuna,
+          observaciones,
         });
-        await onAuthenticated(res.profile);
+        setRequestSent({
+          institucion: nombreInstitucion.trim(),
+          correo: correoContacto.trim(),
+        });
+        setNombreInstitucion('');
+        setNombreContacto('');
+        setCorreoContacto('');
+        setTelefono('');
+        setCiudadComuna('');
+        setObservaciones('');
       }
     } catch (err) {
       setAuthError(
         err instanceof Error
           ? err.message
-          : 'No se pudo completar la autenticación.',
+          : 'No se pudo completar la operación.',
       );
     } finally {
       setAuthLoading(false);
@@ -588,17 +608,17 @@ export const WebLandingPortal: React.FC<WebLandingPortalProps> = ({
                 <li className="flex items-start gap-2.5">
                   <CheckCircle2 className="h-5 w-5 shrink-0 text-[#2E7D32] mt-0.5" />
                   <span>
-                    <strong>App Móvil PWA (Bluetooth):</strong> los manipuladores
-                    inician sesión con la cuenta de su entidad, miden la muestra
-                    y guardan cada lectura en la nube.
+                    <strong>App Móvil PWA (Manipuladores):</strong> el personal de
+                    cocina ingresa con el usuario de manipuladores de su
+                    institución, mide por Bluetooth y guarda cada lectura.
                   </span>
                 </li>
                 <li className="flex items-start gap-2.5">
                   <CheckCircle2 className="h-5 w-5 shrink-0 text-[#2E7D32] mt-0.5" />
                   <span>
-                    <strong>Portal Web de Consulta:</strong> encargados de
-                    casino y control de calidad revisan tendencias y exportan
-                    reportes sin necesitar el sensor conectado.
+                    <strong>Portal Web (Administradores):</strong> la dirección y
+                    encargados de calidad ingresan con su cuenta de administración
+                    para revisar el historial y exportar reportes en solo consulta.
                   </span>
                 </li>
               </ul>
@@ -615,32 +635,34 @@ export const WebLandingPortal: React.FC<WebLandingPortalProps> = ({
         <div className="mx-auto max-w-6xl px-4 sm:px-6 space-y-6">
           <div className="text-center max-w-2xl mx-auto space-y-2">
             <div className="text-xs font-extrabold uppercase tracking-[0.12em] text-[#2A9D8F]">
-              04. Portal de establecimientos (Solo consulta)
+              04. Portal de administradores (Solo consulta)
             </div>
             <h2 className="font-display text-2xl sm:text-3xl font-bold text-[#17324D]">
-              Consulta el historial de tu establecimiento
+              Consulta el historial de tu institución
             </h2>
             <p className="text-sm text-[#55656D]">
-              Ingresa con el usuario y contraseña de tu institución para ver las
-              mediciones realizadas por los manipuladores de alimentos desde la
-              App MEEP.
+              Este portal web es de acceso exclusivo para administradores de cada
+              institución. Si aún no forman parte de MEEP, envía la solicitud de
+              integración y les enviaremos sus credenciales por correo.
             </p>
           </div>
 
           {!profile ? (
-            /* Tarjeta de acceso fiel a index__2___1__4a54fdbc.html */
-            <div className="mx-auto w-full max-w-[430px] rounded-[24px] border border-[#DDE2DC] bg-[#F7F7F2] shadow-[0_14px_40px_rgba(23,50,77,0.12)] overflow-hidden">
+            /* Tarjeta de acceso de administradores + formulario de integración */
+            <div className="mx-auto w-full max-w-[450px] rounded-[24px] border border-[#DDE2DC] bg-[#F7F7F2] shadow-[0_14px_40px_rgba(23,50,77,0.12)] overflow-hidden">
               <div className="bg-[#17324D] text-white text-center px-5 py-7">
                 <strong className="font-display text-sm tracking-[0.16em]">
-                  MEEP
+                  MEEP · ADMINISTRACIÓN
                 </strong>
                 <h3 className="font-display text-[28px] font-bold mt-2 mb-0.5 leading-tight">
-                  {authMode === 'login' ? 'Iniciar sesión' : 'Crear cuenta'}
+                  {portalMode === 'login'
+                    ? 'Iniciar sesión'
+                    : 'Integrar institución'}
                 </h3>
                 <p className="text-sm text-white/80">
-                  {authMode === 'login'
-                    ? 'Consulta los registros de tu establecimiento'
-                    : 'Registra una nueva entidad en el sistema'}
+                  {portalMode === 'login'
+                    ? 'Acceso exclusivo para administradores del establecimiento'
+                    : 'Envía los datos base de tu institución para recibir acceso'}
                 </p>
               </div>
 
@@ -653,13 +675,14 @@ export const WebLandingPortal: React.FC<WebLandingPortalProps> = ({
                   <button
                     type="button"
                     role="tab"
-                    aria-selected={authMode === 'login'}
+                    aria-selected={portalMode === 'login'}
                     onClick={() => {
-                      setAuthMode('login');
+                      setPortalMode('login');
                       setAuthError('');
+                      setRequestSent(null);
                     }}
                     className={`min-h-[44px] rounded-xl font-extrabold text-sm border transition-colors ${
-                      authMode === 'login'
+                      portalMode === 'login'
                         ? 'bg-[#2A9D8F] text-white border-[#2A9D8F]'
                         : 'bg-white text-[#55656D] border-[#DDE2DC]'
                     }`}
@@ -669,18 +692,18 @@ export const WebLandingPortal: React.FC<WebLandingPortalProps> = ({
                   <button
                     type="button"
                     role="tab"
-                    aria-selected={authMode === 'register'}
+                    aria-selected={portalMode === 'request'}
                     onClick={() => {
-                      setAuthMode('register');
+                      setPortalMode('request');
                       setAuthError('');
                     }}
                     className={`min-h-[44px] rounded-xl font-extrabold text-sm border transition-colors ${
-                      authMode === 'register'
+                      portalMode === 'request'
                         ? 'bg-[#2A9D8F] text-white border-[#2A9D8F]'
                         : 'bg-white text-[#55656D] border-[#DDE2DC]'
                     }`}
                   >
-                    Registrarse
+                    Solicitar acceso
                   </button>
                 </div>
 
@@ -704,142 +727,214 @@ export const WebLandingPortal: React.FC<WebLandingPortalProps> = ({
                   </div>
                 )}
 
-                <form onSubmit={handleAuthSubmit} className="space-y-3">
-                  {authMode === 'register' && (
-                    <>
-                      <label className="flex flex-col gap-1 text-sm font-extrabold text-[#263238]">
-                        <span>Nombre del establecimiento</span>
-                        <input
-                          type="text"
-                          required
-                          maxLength={80}
-                          value={nombre}
-                          onChange={(e) => setNombre(e.target.value)}
-                          placeholder="Ej. INSUCO ABG"
-                          className="w-full min-h-[50px] rounded-[13px] border border-[#DDE2DC] bg-white px-3.5 py-2.5 text-base font-normal text-[#263238] focus:border-[#2A9D8F] focus:outline-none"
-                        />
-                      </label>
-
-                      <label className="flex flex-col gap-1 text-sm font-extrabold text-[#263238]">
-                        <span>Usuario</span>
-                        <input
-                          type="text"
-                          required
-                          autoCapitalize="none"
-                          autoCorrect="off"
-                          value={usuario}
-                          onChange={(e) =>
-                            setUsuario(normalizeUsuario(e.target.value))
-                          }
-                          placeholder="Ej. institutodecomercioinsucoabg"
-                          className="w-full min-h-[50px] rounded-[13px] border border-[#DDE2DC] bg-white px-3.5 py-2.5 text-base font-normal text-[#263238] focus:border-[#2A9D8F] focus:outline-none"
-                        />
-                      </label>
-
-                      <label className="flex flex-col gap-1 text-sm font-extrabold text-[#263238]">
-                        <span>Tipo de entidad</span>
-                        <select
-                          value={tipo}
-                          onChange={(e) =>
-                            setTipo(e.target.value as EstablishmentType)
-                          }
-                          className="w-full min-h-[50px] rounded-[13px] border border-[#DDE2DC] bg-white px-3.5 py-2.5 text-base font-normal text-[#263238] focus:border-[#2A9D8F] focus:outline-none"
-                        >
-                          <option value="establecimiento">
-                            Establecimiento educacional
-                          </option>
-                          <option value="casino_junaeb">
-                            Casino escolar JUNAEB / PAE
-                          </option>
-                          <option value="pyme">
-                            PYME / Distribuidora de alimentos
-                          </option>
-                        </select>
-                      </label>
-
-                      <label className="flex flex-col gap-1 text-sm font-extrabold text-[#263238]">
-                        <span>Correo de contacto (opcional)</span>
-                        <input
-                          type="email"
-                          value={correoContacto}
-                          onChange={(e) => setCorreoContacto(e.target.value)}
-                          placeholder="contacto@establecimiento.cl"
-                          className="w-full min-h-[50px] rounded-[13px] border border-[#DDE2DC] bg-white px-3.5 py-2.5 text-base font-normal text-[#263238] focus:border-[#2A9D8F] focus:outline-none"
-                        />
-                      </label>
-                    </>
-                  )}
-
-                  {authMode === 'login' && (
-                    <label className="flex flex-col gap-1 text-sm font-extrabold text-[#263238]">
-                      <span>Usuario del establecimiento</span>
-                      <input
-                        type="text"
-                        required
-                        autoCapitalize="none"
-                        autoCorrect="off"
-                        value={identificador}
-                        onChange={(e) => setIdentificador(e.target.value)}
-                        placeholder="institutodecomercioinsucoabg"
-                        className="w-full min-h-[50px] rounded-[13px] border border-[#DDE2DC] bg-white px-3.5 py-2.5 text-base font-normal text-[#263238] focus:border-[#2A9D8F] focus:outline-none"
-                      />
-                    </label>
-                  )}
-
-                  <label className="flex flex-col gap-1 text-sm font-extrabold text-[#263238]">
-                    <span>Contraseña</span>
-                    <div className="relative">
-                      <input
-                        type={showPassword ? 'text' : 'password'}
-                        required
-                        minLength={6}
-                        value={password}
-                        onChange={(e) => setPassword(e.target.value)}
-                        className="w-full min-h-[50px] rounded-[13px] border border-[#DDE2DC] bg-white px-3.5 py-2.5 pr-12 text-base font-normal text-[#263238] focus:border-[#2A9D8F] focus:outline-none"
-                      />
+                {portalMode === 'request' && requestSent ? (
+                  <div className="rounded-2xl border border-[#BBD8BF] bg-[#E5F0E6] p-5 text-center space-y-3">
+                    <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-white text-[#2E7D32]">
+                      <CheckCircle2 className="h-7 w-7" />
+                    </div>
+                    <h4 className="font-display text-lg font-bold text-[#17324D]">
+                      ¡Solicitud recibida!
+                    </h4>
+                    <p className="text-sm text-[#263238]">
+                      Registramos los datos de{' '}
+                      <strong>{requestSent.institucion}</strong>. Al correo{' '}
+                      <strong>{requestSent.correo}</strong> que nos entregaste
+                      les llegará el <strong>usuario y contraseña</strong> que
+                      crearemos para su institución (acceso administrador para la
+                      web y acceso de manipuladores para la App MEEP).
+                    </p>
+                    <div className="flex flex-col gap-2 pt-1">
                       <button
                         type="button"
-                        onClick={() => setShowPassword((v) => !v)}
-                        aria-label={
-                          showPassword
-                            ? 'Ocultar contraseña'
-                            : 'Mostrar contraseña'
-                        }
-                        className="absolute right-2 top-1/2 -translate-y-1/2 flex h-9 w-9 items-center justify-center rounded-lg text-[#55656D] hover:bg-[#E9ECEE]"
+                        onClick={() => {
+                          setPortalMode('login');
+                          setRequestSent(null);
+                        }}
+                        className="w-full min-h-[46px] rounded-xl bg-[#17324D] text-white text-sm font-extrabold hover:bg-[#10253a]"
                       >
-                        {showPassword ? (
-                          <EyeOff className="h-4 w-4" />
-                        ) : (
-                          <Eye className="h-4 w-4" />
-                        )}
+                        Ir a Iniciar sesión
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setRequestSent(null)}
+                        className="w-full min-h-[42px] rounded-xl border border-[#DDE2DC] bg-white text-xs font-bold text-[#55656D] hover:text-[#17324D]"
+                      >
+                        Enviar otra solicitud
                       </button>
                     </div>
-                  </label>
+                  </div>
+                ) : (
+                  <form onSubmit={handlePortalSubmit} className="space-y-3">
+                    {portalMode === 'request' ? (
+                      <>
+                        <label className="flex flex-col gap-1 text-sm font-extrabold text-[#263238]">
+                          <span>Nombre de la institución</span>
+                          <input
+                            type="text"
+                            required
+                            maxLength={100}
+                            value={nombreInstitucion}
+                            onChange={(e) =>
+                              setNombreInstitucion(e.target.value)
+                            }
+                            placeholder="Ej. Liceo Bicentenario de Viña del Mar"
+                            className="w-full min-h-[48px] rounded-[13px] border border-[#DDE2DC] bg-white px-3.5 py-2.5 text-base font-normal text-[#263238] focus:border-[#2A9D8F] focus:outline-none"
+                          />
+                        </label>
 
-                  <button
-                    type="submit"
-                    disabled={authLoading || !isSupabaseConfigured}
-                    className="w-full min-h-[52px] rounded-[14px] bg-[#17324D] text-white text-base font-extrabold hover:bg-[#10253a] disabled:opacity-45 disabled:cursor-not-allowed"
-                  >
-                    {authLoading
-                      ? 'Verificando…'
-                      : authMode === 'login'
-                        ? 'Ingresar'
-                        : 'Crear cuenta'}
-                  </button>
-                </form>
+                        <label className="flex flex-col gap-1 text-sm font-extrabold text-[#263238]">
+                          <span>Tipo de entidad</span>
+                          <select
+                            value={tipo}
+                            onChange={(e) =>
+                              setTipo(e.target.value as EstablishmentType)
+                            }
+                            className="w-full min-h-[48px] rounded-[13px] border border-[#DDE2DC] bg-white px-3.5 py-2.5 text-base font-normal text-[#263238] focus:border-[#2A9D8F] focus:outline-none"
+                          >
+                            <option value="establecimiento">
+                              Establecimiento educacional
+                            </option>
+                            <option value="casino_junaeb">
+                              Casino escolar JUNAEB / PAE
+                            </option>
+                            <option value="pyme">
+                              PYME / Distribuidora de alimentos
+                            </option>
+                          </select>
+                        </label>
+
+                        <label className="flex flex-col gap-1 text-sm font-extrabold text-[#263238]">
+                          <span>Nombre del encargado o contacto</span>
+                          <input
+                            type="text"
+                            required
+                            maxLength={80}
+                            value={nombreContacto}
+                            onChange={(e) => setNombreContacto(e.target.value)}
+                            placeholder="Ej. María Pérez (Encargada de casino)"
+                            className="w-full min-h-[48px] rounded-[13px] border border-[#DDE2DC] bg-white px-3.5 py-2.5 text-base font-normal text-[#263238] focus:border-[#2A9D8F] focus:outline-none"
+                          />
+                        </label>
+
+                        <label className="flex flex-col gap-1 text-sm font-extrabold text-[#263238]">
+                          <span>Correo para recibir credenciales</span>
+                          <input
+                            type="email"
+                            required
+                            value={correoContacto}
+                            onChange={(e) => setCorreoContacto(e.target.value)}
+                            placeholder="contacto@institucion.cl"
+                            className="w-full min-h-[48px] rounded-[13px] border border-[#DDE2DC] bg-white px-3.5 py-2.5 text-base font-normal text-[#263238] focus:border-[#2A9D8F] focus:outline-none"
+                          />
+                        </label>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <label className="flex flex-col gap-1 text-sm font-extrabold text-[#263238]">
+                            <span>Teléfono (opcional)</span>
+                            <input
+                              type="tel"
+                              value={telefono}
+                              onChange={(e) => setTelefono(e.target.value)}
+                              placeholder="+56 9 1234 5678"
+                              className="w-full min-h-[48px] rounded-[13px] border border-[#DDE2DC] bg-white px-3.5 py-2.5 text-base font-normal text-[#263238] focus:border-[#2A9D8F] focus:outline-none"
+                            />
+                          </label>
+                          <label className="flex flex-col gap-1 text-sm font-extrabold text-[#263238]">
+                            <span>Comuna / ciudad (opcional)</span>
+                            <input
+                              type="text"
+                              value={ciudadComuna}
+                              onChange={(e) => setCiudadComuna(e.target.value)}
+                              placeholder="Viña del Mar"
+                              className="w-full min-h-[48px] rounded-[13px] border border-[#DDE2DC] bg-white px-3.5 py-2.5 text-base font-normal text-[#263238] focus:border-[#2A9D8F] focus:outline-none"
+                            />
+                          </label>
+                        </div>
+
+                        <label className="flex flex-col gap-1 text-sm font-extrabold text-[#263238]">
+                          <span>Datos adicionales (opcional)</span>
+                          <textarea
+                            rows={2}
+                            value={observaciones}
+                            onChange={(e) => setObservaciones(e.target.value)}
+                            placeholder="Ej. Cantidad aproximada de manipuladores o comentarios…"
+                            className="w-full rounded-[13px] border border-[#DDE2DC] bg-white px-3.5 py-2.5 text-sm font-normal text-[#263238] focus:border-[#2A9D8F] focus:outline-none"
+                          />
+                        </label>
+                      </>
+                    ) : (
+                      <>
+                        <label className="flex flex-col gap-1 text-sm font-extrabold text-[#263238]">
+                          <span>Usuario administrador</span>
+                          <input
+                            type="text"
+                            required
+                            autoCapitalize="none"
+                            autoCorrect="off"
+                            value={identificador}
+                            onChange={(e) => setIdentificador(e.target.value)}
+                            placeholder="insucoadministracion"
+                            className="w-full min-h-[50px] rounded-[13px] border border-[#DDE2DC] bg-white px-3.5 py-2.5 text-base font-normal text-[#263238] focus:border-[#2A9D8F] focus:outline-none"
+                          />
+                        </label>
+
+                        <label className="flex flex-col gap-1 text-sm font-extrabold text-[#263238]">
+                          <span>Contraseña</span>
+                          <div className="relative">
+                            <input
+                              type={showPassword ? 'text' : 'password'}
+                              required
+                              minLength={6}
+                              value={password}
+                              onChange={(e) => setPassword(e.target.value)}
+                              className="w-full min-h-[50px] rounded-[13px] border border-[#DDE2DC] bg-white px-3.5 py-2.5 pr-12 text-base font-normal text-[#263238] focus:border-[#2A9D8F] focus:outline-none"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => setShowPassword((v) => !v)}
+                              aria-label={
+                                showPassword
+                                  ? 'Ocultar contraseña'
+                                  : 'Mostrar contraseña'
+                              }
+                              className="absolute right-2 top-1/2 -translate-y-1/2 flex h-9 w-9 items-center justify-center rounded-lg text-[#55656D] hover:bg-[#E9ECEE]"
+                            >
+                              {showPassword ? (
+                                <EyeOff className="h-4 w-4" />
+                              ) : (
+                                <Eye className="h-4 w-4" />
+                              )}
+                            </button>
+                          </div>
+                        </label>
+                      </>
+                    )}
+
+                    <button
+                      type="submit"
+                      disabled={authLoading || !isSupabaseConfigured}
+                      className="w-full min-h-[52px] rounded-[14px] bg-[#17324D] text-white text-base font-extrabold hover:bg-[#10253a] disabled:opacity-45 disabled:cursor-not-allowed"
+                    >
+                      {authLoading
+                        ? 'Enviando…'
+                        : portalMode === 'login'
+                          ? 'Ingresar al portal'
+                          : 'Enviar solicitud'}
+                    </button>
+                  </form>
+                )}
 
                 <button
                   type="button"
                   onClick={onOpenApp}
-                  className="mt-2.5 w-full min-h-[52px] rounded-[14px] border-2 border-[#17324D] bg-white text-[#17324D] text-base font-extrabold hover:bg-[#E0F1EF]"
+                  className="mt-2.5 w-full min-h-[50px] rounded-[14px] border-2 border-[#17324D] bg-white text-[#17324D] text-sm font-extrabold hover:bg-[#E0F1EF]"
                 >
-                  Ir a la App para medir
+                  Ir a la App MEEP (acceso manipuladores)
                 </button>
               </div>
             </div>
           ) : (
-            /* Panel de solo lectura cuando el establecimiento ya inició sesión */
+            /* Panel de solo lectura cuando el administrador ya inició sesión */
             <div className="rounded-3xl border border-[#DDE2DC] bg-white p-5 sm:p-7 space-y-6 shadow-sm">
               <div className="flex flex-wrap items-center justify-between gap-4 border-b border-[#E1E3DA] pb-5">
                 <div className="flex items-center gap-3.5 min-w-0">
@@ -851,7 +946,7 @@ export const WebLandingPortal: React.FC<WebLandingPortalProps> = ({
                       {profile.nombre}
                     </div>
                     <div className="text-xs font-semibold text-[#55656D]">
-                      @{profile.usuario} · Portal de solo lectura
+                      @{profile.usuario} · Administrador (Solo consulta)
                     </div>
                   </div>
                 </div>

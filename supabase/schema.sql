@@ -1,7 +1,11 @@
 -- ============================================================================
--- MEEP / PROYECTO PEMI (INSUCO ABG) - ESQUEMA SUPABASE (USUARIO + CLAVE + RLS)
+-- MEEP / PROYECTO PEMI (INSUCO ABG) - ESQUEMA SUPABASE (ADMIN WEB + APP MANIPULADORES)
 -- ============================================================================
--- Autenticación directa por usuario de establecimiento (sin requerir correo).
+-- Modelo de acceso por institución:
+--   1) Administrador (Página Web - solo consulta): usuario + clave admin
+--   2) Manipuladores (App MEEP - medir por Bluetooth): usuario_manipulador + clave
+--   3) Solicitudes de integración (formulario web): tabla solicitudes_integracion
+--
 -- Ejecuta este script completo en: Supabase -> SQL Editor -> New query -> Run.
 -- ============================================================================
 
@@ -15,13 +19,21 @@ create table if not exists public.establecimientos (
     and usuario ~ '^[a-z0-9._-]{3,50}$'
   ),
   password_hash text,
+  usuario_manipulador text unique check (
+    usuario_manipulador is null
+    or (
+      usuario_manipulador = lower(trim(usuario_manipulador))
+      and usuario_manipulador ~ '^[a-z0-9._-]{3,50}$'
+    )
+  ),
+  password_manipulador_hash text,
   correo_contacto text,
   tipo text not null default 'establecimiento'
     check (tipo in ('establecimiento', 'casino_junaeb', 'pyme')),
   created_at timestamptz not null default now()
 );
 
--- Migración segura si ya existía la tabla vinculada a auth.users
+-- Migraciones seguras si la tabla ya existía de una versión anterior
 alter table if exists public.establecimientos
   drop constraint if exists establecimientos_id_fkey;
 
@@ -31,15 +43,52 @@ alter table if exists public.establecimientos
 alter table if exists public.establecimientos
   add column if not exists password_hash text;
 
+alter table if exists public.establecimientos
+  add column if not exists usuario_manipulador text;
+
+alter table if exists public.establecimientos
+  add column if not exists password_manipulador_hash text;
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint
+    where conname = 'establecimientos_usuario_manipulador_key'
+  ) then
+    alter table public.establecimientos
+      add constraint establecimientos_usuario_manipulador_key unique (usuario_manipulador);
+  end if;
+end $$;
+
 create table if not exists public.establecimiento_sesiones (
   token text primary key,
   establecimiento_id uuid not null references public.establecimientos(id) on delete cascade,
+  rol text not null default 'admin' check (rol in ('admin', 'manipulador')),
   created_at timestamptz not null default now(),
   expires_at timestamptz not null default (now() + interval '30 days')
 );
 
+alter table if exists public.establecimiento_sesiones
+  add column if not exists rol text not null default 'admin';
+
 create index if not exists idx_sesiones_estab
   on public.establecimiento_sesiones (establecimiento_id);
+
+-- Tabla para recibir solicitudes de nuevas instituciones desde el formulario web
+create table if not exists public.solicitudes_integracion (
+  id uuid primary key default gen_random_uuid(),
+  nombre_institucion text not null check (char_length(trim(nombre_institucion)) >= 2),
+  tipo text not null default 'establecimiento'
+    check (tipo in ('establecimiento', 'casino_junaeb', 'pyme')),
+  nombre_contacto text not null check (char_length(trim(nombre_contacto)) >= 2),
+  correo_contacto text not null check (position('@' in correo_contacto) > 1),
+  telefono text,
+  ciudad_comuna text,
+  observaciones text,
+  estado text not null default 'pendiente'
+    check (estado in ('pendiente', 'en_revision', 'aprobada', 'rechazada')),
+  created_at timestamptz not null default now()
+);
 
 create table if not exists public.alimentos (
   clave text primary key,
@@ -91,10 +140,11 @@ select
 from public.mediciones
 group by establecimiento_id;
 
--- Seguridad RLS: solo alimentos es público en lectura; establecimientos, sesiones
--- y mediciones se consultan exclusivamente mediante funciones RPC validadas.
+-- Seguridad RLS: solo alimentos es público en lectura; establecimientos, sesiones,
+-- solicitudes y mediciones se operan únicamente mediante funciones RPC validadas.
 alter table public.establecimientos enable row level security;
 alter table public.establecimiento_sesiones enable row level security;
+alter table public.solicitudes_integracion enable row level security;
 alter table public.alimentos enable row level security;
 alter table public.mediciones enable row level security;
 
@@ -111,79 +161,16 @@ create policy "alimentos_select_todos"
   using (true);
 
 -- ============================================================================
--- FUNCIONES RPC DE AUTENTICACIÓN POR USUARIO Y GESTIÓN DE MEDICIONES
+-- FUNCIONES RPC DE AUTENTICACIÓN POR ROL, SOLICITUDES Y MEDICIONES
 -- ============================================================================
 
-create or replace function public.meep_registrar(
-  p_nombre text,
-  p_usuario text,
-  p_tipo text,
-  p_correo_contacto text,
-  p_password text
-)
-returns jsonb
-language plpgsql
-security definer
-set search_path = public, extensions
-as $$
-declare
-  v_nombre text := trim(coalesce(p_nombre, ''));
-  v_usuario text := regexp_replace(lower(trim(coalesce(p_usuario, ''))), '[^a-z0-9._-]', '', 'g');
-  v_tipo text := case
-    when p_tipo in ('establecimiento', 'casino_junaeb', 'pyme') then p_tipo
-    else 'establecimiento'
-  end;
-  v_correo text := nullif(trim(coalesce(p_correo_contacto, '')), '');
-  v_est public.establecimientos;
-  v_token text;
-begin
-  if char_length(v_nombre) < 2 then
-    raise exception 'NOMBRE_INVALIDO';
-  end if;
-
-  if v_usuario !~ '^[a-z0-9._-]{3,50}$' then
-    raise exception 'USUARIO_INVALIDO';
-  end if;
-
-  if char_length(coalesce(p_password, '')) < 6 then
-    raise exception 'PASSWORD_CORTA';
-  end if;
-
-  if exists (select 1 from public.establecimientos where usuario = v_usuario) then
-    raise exception 'USUARIO_DUPLICADO';
-  end if;
-
-  insert into public.establecimientos (nombre, usuario, password_hash, correo_contacto, tipo)
-  values (
-    v_nombre,
-    v_usuario,
-    crypt(p_password, gen_salt('bf')),
-    v_correo,
-    v_tipo
-  )
-  returning * into v_est;
-
-  v_token := encode(gen_random_bytes(32), 'hex');
-  insert into public.establecimiento_sesiones (token, establecimiento_id)
-  values (v_token, v_est.id);
-
-  return jsonb_build_object(
-    'token', v_token,
-    'profile', jsonb_build_object(
-      'id', v_est.id,
-      'nombre', v_est.nombre,
-      'usuario', v_est.usuario,
-      'correo_contacto', v_est.correo_contacto,
-      'tipo', v_est.tipo,
-      'created_at', v_est.created_at
-    )
-  );
-end;
-$$;
+-- Limpia firma anterior si existía de versión previa
+drop function if exists public.meep_login(text, text);
 
 create or replace function public.meep_login(
   p_identificador text,
-  p_password text
+  p_password text,
+  p_canal text default 'web'
 )
 returns jsonb
 language plpgsql
@@ -192,37 +179,83 @@ set search_path = public, extensions
 as $$
 declare
   v_clean text := lower(trim(coalesce(p_identificador, '')));
+  v_canal text := case when p_canal = 'app' then 'app' else 'web' end;
   v_est public.establecimientos;
   v_token text;
+  v_rol text;
 begin
   if v_clean = '' or coalesce(p_password, '') = '' then
     raise exception 'CREDENCIALES_INVALIDAS';
   end if;
 
-  select * into v_est
-  from public.establecimientos e
-  where e.usuario = v_clean
-     or lower(coalesce(e.correo_contacto, '')) = v_clean
-  limit 1;
+  if v_canal = 'web' then
+    -- En la página web solo ingresan administradores
+    select * into v_est
+    from public.establecimientos e
+    where e.usuario = v_clean
+    limit 1;
 
-  if v_est.id is null
-     or v_est.password_hash is null
-     or v_est.password_hash <> crypt(p_password, v_est.password_hash) then
-    raise exception 'CREDENCIALES_INVALIDAS';
+    if v_est.id is not null then
+      if v_est.password_hash is null
+         or v_est.password_hash <> crypt(p_password, v_est.password_hash) then
+        raise exception 'CREDENCIALES_INVALIDAS';
+      end if;
+      v_rol := 'admin';
+    else
+      -- Verifica si está intentando usar la cuenta de manipulador en la web
+      select * into v_est
+      from public.establecimientos e
+      where e.usuario_manipulador = v_clean
+      limit 1;
+
+      if v_est.id is not null then
+        raise exception 'SOLO_APP_MANIPULADOR';
+      end if;
+
+      raise exception 'CREDENCIALES_INVALIDAS';
+    end if;
+  else
+    -- En la App MEEP ingresan los manipuladores de alimentos
+    select * into v_est
+    from public.establecimientos e
+    where e.usuario_manipulador = v_clean
+    limit 1;
+
+    if v_est.id is not null then
+      if v_est.password_manipulador_hash is null
+         or v_est.password_manipulador_hash <> crypt(p_password, v_est.password_manipulador_hash) then
+        raise exception 'CREDENCIALES_INVALIDAS';
+      end if;
+      v_rol := 'manipulador';
+    else
+      -- Verifica si está intentando usar la cuenta de administrador en la App
+      select * into v_est
+      from public.establecimientos e
+      where e.usuario = v_clean
+      limit 1;
+
+      if v_est.id is not null then
+        raise exception 'SOLO_WEB_ADMIN';
+      end if;
+
+      raise exception 'CREDENCIALES_INVALIDAS';
+    end if;
   end if;
 
   v_token := encode(gen_random_bytes(32), 'hex');
-  insert into public.establecimiento_sesiones (token, establecimiento_id)
-  values (v_token, v_est.id);
+  insert into public.establecimiento_sesiones (token, establecimiento_id, rol)
+  values (v_token, v_est.id, v_rol);
 
   return jsonb_build_object(
     'token', v_token,
     'profile', jsonb_build_object(
       'id', v_est.id,
       'nombre', v_est.nombre,
-      'usuario', v_est.usuario,
+      'usuario', case when v_rol = 'manipulador' then coalesce(v_est.usuario_manipulador, v_est.usuario) else v_est.usuario end,
+      'usuario_manipulador', v_est.usuario_manipulador,
       'correo_contacto', v_est.correo_contacto,
       'tipo', v_est.tipo,
+      'rol', v_rol,
       'created_at', v_est.created_at
     )
   );
@@ -237,12 +270,15 @@ set search_path = public
 as $$
 declare
   v_est public.establecimientos;
+  v_rol text;
 begin
   if coalesce(trim(p_token), '') = '' then
     return null;
   end if;
 
-  select e.* into v_est
+  select e.*, s.rol into v_est.id, v_est.nombre, v_est.usuario, v_est.password_hash,
+    v_est.usuario_manipulador, v_est.password_manipulador_hash,
+    v_est.correo_contacto, v_est.tipo, v_est.created_at, v_rol
   from public.establecimiento_sesiones s
   join public.establecimientos e on e.id = s.establecimiento_id
   where s.token = p_token
@@ -256,9 +292,11 @@ begin
   return jsonb_build_object(
     'id', v_est.id,
     'nombre', v_est.nombre,
-    'usuario', v_est.usuario,
+    'usuario', case when v_rol = 'manipulador' then coalesce(v_est.usuario_manipulador, v_est.usuario) else v_est.usuario end,
+    'usuario_manipulador', v_est.usuario_manipulador,
     'correo_contacto', v_est.correo_contacto,
     'tipo', v_est.tipo,
+    'rol', v_rol,
     'created_at', v_est.created_at
   );
 end;
@@ -271,6 +309,69 @@ security definer
 set search_path = public
 as $$
   delete from public.establecimiento_sesiones where token = p_token;
+$$;
+
+create or replace function public.meep_enviar_solicitud(
+  p_nombre_institucion text,
+  p_tipo text,
+  p_nombre_contacto text,
+  p_correo_contacto text,
+  p_telefono text default null,
+  p_ciudad_comuna text default null,
+  p_observaciones text default null
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_institucion text := trim(coalesce(p_nombre_institucion, ''));
+  v_contacto text := trim(coalesce(p_nombre_contacto, ''));
+  v_correo text := lower(trim(coalesce(p_correo_contacto, '')));
+  v_tipo text := case
+    when p_tipo in ('establecimiento', 'casino_junaeb', 'pyme') then p_tipo
+    else 'establecimiento'
+  end;
+  v_row public.solicitudes_integracion;
+begin
+  if char_length(v_institucion) < 2 then
+    raise exception 'NOMBRE_INVALIDO';
+  end if;
+
+  if char_length(v_contacto) < 2 then
+    raise exception 'CONTACTO_INVALIDO';
+  end if;
+
+  if v_correo !~ '^[^@\s]+@[^@\s]+\.[^@\s]+$' then
+    raise exception 'CORREO_INVALIDO';
+  end if;
+
+  insert into public.solicitudes_integracion (
+    nombre_institucion,
+    tipo,
+    nombre_contacto,
+    correo_contacto,
+    telefono,
+    ciudad_comuna,
+    observaciones
+  ) values (
+    v_institucion,
+    v_tipo,
+    v_contacto,
+    v_correo,
+    nullif(trim(coalesce(p_telefono, '')), ''),
+    nullif(trim(coalesce(p_ciudad_comuna, '')), ''),
+    nullif(trim(coalesce(p_observaciones, '')), '')
+  )
+  returning * into v_row;
+
+  return jsonb_build_object(
+    'id', v_row.id,
+    'estado', v_row.estado,
+    'created_at', v_row.created_at
+  );
+end;
 $$;
 
 create or replace function public.meep_listar_mediciones(p_token text)
@@ -395,16 +496,16 @@ begin
 end;
 $$;
 
-grant execute on function public.meep_registrar(text, text, text, text, text) to anon, authenticated;
-grant execute on function public.meep_login(text, text) to anon, authenticated;
+grant execute on function public.meep_login(text, text, text) to anon, authenticated;
 grant execute on function public.meep_perfil(text) to anon, authenticated;
 grant execute on function public.meep_logout(text) to anon, authenticated;
+grant execute on function public.meep_enviar_solicitud(text, text, text, text, text, text, text) to anon, authenticated;
 grant execute on function public.meep_listar_mediciones(text) to anon, authenticated;
 grant execute on function public.meep_insertar_medicion(text, text, numeric, numeric, text, text, text, text, text, text, text, timestamptz) to anon, authenticated;
 grant execute on function public.meep_eliminar_medicion(text, uuid) to anon, authenticated;
 
 -- ============================================================================
--- DATOS INICIALES: ALIMENTOS LÁCTEOS + CUENTA OFICIAL INSUCO ABG
+-- DATOS INICIALES: ALIMENTOS LÁCTEOS + CUENTA DUAL OFICIAL INSUCO ABG
 -- ============================================================================
 
 insert into public.alimentos (
@@ -422,17 +523,54 @@ on conflict (clave) do update set
   rango_contaminado_min = excluded.rango_contaminado_min,
   orden = excluded.orden;
 
+-- Migra si existía con el usuario anterior institutodecomercioinsucoabg
+update public.establecimientos
+set
+  nombre = 'INSUCO ABG',
+  usuario = 'insucoadministracion',
+  password_hash = extensions.crypt('insucoalimentos123456', extensions.gen_salt('bf')),
+  usuario_manipulador = 'insucoalimentos',
+  password_manipulador_hash = extensions.crypt('alimentacionabg11234', extensions.gen_salt('bf'))
+where usuario = 'institutodecomercioinsucoabg';
+
 insert into public.establecimientos (
-  nombre, usuario, password_hash, correo_contacto, tipo
+  nombre,
+  usuario,
+  password_hash,
+  usuario_manipulador,
+  password_manipulador_hash,
+  correo_contacto,
+  tipo
 ) values (
   'INSUCO ABG',
-  'institutodecomercioinsucoabg',
-  extensions.crypt('INSUCOABGALIMENTOS2026', extensions.gen_salt('bf')),
+  'insucoadministracion',
+  extensions.crypt('insucoalimentos123456', extensions.gen_salt('bf')),
+  'insucoalimentos',
+  extensions.crypt('alimentacionabg11234', extensions.gen_salt('bf')),
   null,
   'establecimiento'
 )
 on conflict (usuario) do update set
   nombre = excluded.nombre,
-  password_hash = excluded.password_hash;
+  password_hash = excluded.password_hash,
+  usuario_manipulador = excluded.usuario_manipulador,
+  password_manipulador_hash = excluded.password_manipulador_hash;
 
 notify pgrst, 'reload schema';
+
+-- ============================================================================
+-- PLANTILLA PARA QUE EL EQUIPO MEEP CREE NUEVAS INSTITUCIONES APROBADAS:
+-- (Ejecutar en SQL Editor cuando aprueben una solicitud de solicitudes_integracion)
+--
+-- insert into public.establecimientos (
+--   nombre, usuario, password_hash, usuario_manipulador, password_manipulador_hash, correo_contacto, tipo
+-- ) values (
+--   'Nombre Nueva Institución',
+--   'usuarioadmin',
+--   extensions.crypt('clave_admin', extensions.gen_salt('bf')),
+--   'manipuladorainstitucion',
+--   extensions.crypt('clave_manipuladores', extensions.gen_salt('bf')),
+--   'correo@institucion.cl',
+--   'establecimiento'
+-- );
+-- ============================================================================
