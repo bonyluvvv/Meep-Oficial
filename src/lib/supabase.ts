@@ -52,7 +52,7 @@ export function normalizeUsuario(raw: string): string {
     .trim()
     .toLowerCase()
     .replace(/\s+/g, '')
-    .replace(/[^a-z0-9._-]/g, '');
+    .replace(/[^a-zñ0-9._-]/g, '');
 }
 
 function getStoredToken(channel: MeepChannel): string | null {
