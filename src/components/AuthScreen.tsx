@@ -123,7 +123,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
                 autoCorrect="off"
                 value={identificador}
                 onChange={(e) => setIdentificador(e.target.value)}
-                placeholder="insucoalimentos"
+                placeholder="comeducalimentos"
                 className="w-full min-h-[50px] rounded-[13px] border border-[#DDE2DC] bg-white px-3.5 py-2.5 text-base font-normal text-[#263238] focus:border-[#2A9D8F] focus:outline-none"
               />
             </label>

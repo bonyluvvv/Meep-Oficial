@@ -541,15 +541,25 @@ insert into public.establecimientos (
   password_manipulador_hash,
   correo_contacto,
   tipo
-) values (
-  'INSUCO ABG',
-  'insucoadministracion',
-  extensions.crypt('insucoalimentos123456', extensions.gen_salt('bf')),
-  'insucoalimentos',
-  extensions.crypt('alimentacionabg11234', extensions.gen_salt('bf')),
-  null,
-  'establecimiento'
-)
+) values
+  (
+    'INSUCO ABG',
+    'insucoadministracion',
+    extensions.crypt('insucoalimentos123456', extensions.gen_salt('bf')),
+    'insucoalimentos',
+    extensions.crypt('alimentacionabg11234', extensions.gen_salt('bf')),
+    null,
+    'establecimiento'
+  ),
+  (
+    'Red Educacional Comeduc',
+    'comeducadministracion',
+    extensions.crypt('comeducalimentos123456', extensions.gen_salt('bf')),
+    'comeducalimentos',
+    extensions.crypt('comeducalimentos11234', extensions.gen_salt('bf')),
+    null,
+    'establecimiento'
+  )
 on conflict (usuario) do update set
   nombre = excluded.nombre,
   password_hash = excluded.password_hash,

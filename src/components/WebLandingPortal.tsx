@@ -267,7 +267,7 @@ export const WebLandingPortal: React.FC<WebLandingPortalProps> = ({
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-10 items-stretch">
           <div className="lg:col-span-7 flex flex-col justify-center space-y-5">
             <p className="text-xs font-extrabold uppercase tracking-[0.12em] text-[#2A9D8F]">
-              Proyecto PEMI · Instituto Comercial Bicentenario de Viña del Mar
+              Proyecto PEMI · Red Educacional Comeduc
             </p>
             <h1 className="font-display text-4xl sm:text-5xl font-bold text-[#17324D] leading-[1.08] tracking-tight">
               Control preventivo de pH para alimentos más seguros
@@ -566,10 +566,10 @@ export const WebLandingPortal: React.FC<WebLandingPortalProps> = ({
                 Pensado para casinos escolares y PYMEs alimentarias
               </h2>
               <p className="text-sm sm:text-base text-[#55656D]">
-                Nuestro foco inicial son los establecimientos educacionales
-                vinculados a Comeduc y el programa JUNAEB (más de 1,8 millones de
-                estudiantes en Chile, partiendo por nuestro liceo con más de 500
-                alumnos), junto a pequeñas distribuidoras de lácteos.
+                Nuestro foco son todos los liceos de la Fundación Educacional
+                Comeduc y los establecimientos vinculados al programa JUNAEB (más
+                de 1,8 millones de estudiantes en Chile), junto a casinos
+                escolares y pequeñas distribuidoras de lácteos.
               </p>
 
               <div className="grid grid-cols-2 gap-3 pt-2">
@@ -777,7 +777,7 @@ export const WebLandingPortal: React.FC<WebLandingPortalProps> = ({
                             onChange={(e) =>
                               setNombreInstitucion(e.target.value)
                             }
-                            placeholder="Ej. Liceo Bicentenario de Viña del Mar"
+                            placeholder="Ej. Liceo Comercial de la Red Comeduc"
                             className="w-full min-h-[48px] rounded-[13px] border border-[#DDE2DC] bg-white px-3.5 py-2.5 text-base font-normal text-[#263238] focus:border-[#2A9D8F] focus:outline-none"
                           />
                         </label>
@@ -845,7 +845,7 @@ export const WebLandingPortal: React.FC<WebLandingPortalProps> = ({
                               type="text"
                               value={ciudadComuna}
                               onChange={(e) => setCiudadComuna(e.target.value)}
-                              placeholder="Viña del Mar"
+                              placeholder="Ej. Santiago / Viña del Mar"
                               className="w-full min-h-[48px] rounded-[13px] border border-[#DDE2DC] bg-white px-3.5 py-2.5 text-base font-normal text-[#263238] focus:border-[#2A9D8F] focus:outline-none"
                             />
                           </label>
@@ -873,7 +873,7 @@ export const WebLandingPortal: React.FC<WebLandingPortalProps> = ({
                             autoCorrect="off"
                             value={identificador}
                             onChange={(e) => setIdentificador(e.target.value)}
-                            placeholder="insucoadministracion"
+                            placeholder="comeducadministracion"
                             className="w-full min-h-[50px] rounded-[13px] border border-[#DDE2DC] bg-white px-3.5 py-2.5 text-base font-normal text-[#263238] focus:border-[#2A9D8F] focus:outline-none"
                           />
                         </label>
@@ -1237,7 +1237,7 @@ export const WebLandingPortal: React.FC<WebLandingPortalProps> = ({
       <footer className="border-t border-[#E1E3DA] bg-[#F7F7F2] py-8">
         <div className="mx-auto max-w-6xl px-4 sm:px-6 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-[#55656D]">
           <div className="font-semibold text-[#17324D]">
-            MEEP · Proyecto PEMI 2026 · INSUCO Alberto Blest Gana
+            MEEP · Proyecto PEMI 2026 · Fundación Educacional Comeduc
           </div>
           <div className="flex items-center gap-4">
             <a href="#problema" className="hover:text-[#17324D]">
