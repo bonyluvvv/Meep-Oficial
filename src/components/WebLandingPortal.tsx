@@ -202,7 +202,7 @@ export const WebLandingPortal: React.FC<WebLandingPortalProps> = ({
 
   return (
     <div className="min-h-screen bg-[#F7F7F2] text-[#263238]">
-      {/* Top Bar Contract: Brand — 4-5 nav links — 1 Primary Action */}
+      {/* Barra de navegación superior */}
       <header className="sticky top-0 z-30 border-b border-[#E1E3DA] bg-white/95 backdrop-blur-md">
         <div className="mx-auto flex h-16 max-w-6xl items-center justify-between gap-8 px-4 sm:px-6">
           <a
@@ -377,7 +377,7 @@ export const WebLandingPortal: React.FC<WebLandingPortalProps> = ({
           </div>
         </div>
 
-        {/* 4-column KPI strip below hero */}
+        {/* Franja de indicadores principales */}
         <div className="mt-8 grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
           <div className="rounded-2xl border border-[#E1E3DA] bg-white p-4">
             <div className="font-display text-2xl sm:text-3xl font-bold text-[#17324D] tabular-nums">
@@ -627,7 +627,7 @@ export const WebLandingPortal: React.FC<WebLandingPortalProps> = ({
         </div>
       </section>
 
-      {/* Sección 4: Portal de Establecimientos (Solo lectura + Login idéntico al index enviado) */}
+      {/* Sección 4: Portal de Establecimientos (Solo lectura) */}
       <section
         id="portal"
         className="border-t border-[#E1E3DA] bg-[#E8E9E1] py-12 sm:py-16"
@@ -1233,7 +1233,7 @@ export const WebLandingPortal: React.FC<WebLandingPortalProps> = ({
         </div>
       </section>
 
-      {/* Quiet Footer */}
+      {/* Pie de página */}
       <footer className="border-t border-[#E1E3DA] bg-[#F7F7F2] py-8">
         <div className="mx-auto max-w-6xl px-4 sm:px-6 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-[#55656D]">
           <div className="font-semibold text-[#17324D]">
