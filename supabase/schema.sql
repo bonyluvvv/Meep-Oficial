@@ -124,38 +124,11 @@ alter table if exists public.establecimientos
     )
   );
 
-do $$
-begin
-  if not exists (
-    select 1
-    from pg_constraint c
-    join pg_attribute a
-      on a.attrelid = c.conrelid
-     and a.attnum = any(c.conkey)
-    where c.conrelid = 'public.establecimientos'::regclass
-      and c.contype in ('u', 'p')
-      and array_length(c.conkey, 1) = 1
-      and a.attname = 'usuario'
-  ) then
-    alter table public.establecimientos
-      add constraint establecimientos_usuario_key unique (usuario);
-  end if;
+create unique index if not exists idx_establecimientos_usuario_unique
+  on public.establecimientos (usuario);
 
-  if not exists (
-    select 1
-    from pg_constraint c
-    join pg_attribute a
-      on a.attrelid = c.conrelid
-     and a.attnum = any(c.conkey)
-    where c.conrelid = 'public.establecimientos'::regclass
-      and c.contype in ('u', 'p')
-      and array_length(c.conkey, 1) = 1
-      and a.attname = 'usuario_manipulador'
-  ) then
-    alter table public.establecimientos
-      add constraint establecimientos_usuario_manipulador_key unique (usuario_manipulador);
-  end if;
-end $$;
+create unique index if not exists idx_establecimientos_usuario_manipulador_unique
+  on public.establecimientos (usuario_manipulador);
 
 create or replace function public.meep_hash_establecimiento_passwords()
 returns trigger
