@@ -81,6 +81,36 @@ begin
   end if;
 end $$;
 
+create or replace function public.meep_hash_establecimiento_passwords()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+begin
+  if new.password_hash is not null
+     and new.password_hash <> ''
+     and new.password_hash !~ '^\$2[aby]\$\d{2}\$' then
+    new.password_hash := extensions.crypt(new.password_hash, extensions.gen_salt('bf'));
+  end if;
+
+  if new.password_manipulador_hash is not null
+     and new.password_manipulador_hash <> ''
+     and new.password_manipulador_hash !~ '^\$2[aby]\$\d{2}\$' then
+    new.password_manipulador_hash := extensions.crypt(new.password_manipulador_hash, extensions.gen_salt('bf'));
+  end if;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_establecimientos_hash_passwords on public.establecimientos;
+create trigger trg_establecimientos_hash_passwords
+  before insert or update of password_hash, password_manipulador_hash
+  on public.establecimientos
+  for each row
+  execute function public.meep_hash_establecimiento_passwords();
+
 create table if not exists public.establecimiento_sesiones (
   token text primary key,
   establecimiento_id uuid not null references public.establecimientos(id) on delete cascade,
