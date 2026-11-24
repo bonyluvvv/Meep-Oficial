@@ -65,15 +65,22 @@ alter table if exists public.establecimientos
   add column if not exists created_at timestamptz not null default now();
 
 do $$
+declare
+  col record;
 begin
-  if exists (
-    select 1 from information_schema.columns
+  for col in
+    select column_name
+    from information_schema.columns
     where table_schema = 'public'
       and table_name = 'establecimientos'
-      and column_name = 'email'
-  ) then
-    execute 'alter table public.establecimientos alter column email drop not null';
-  end if;
+      and is_nullable = 'NO'
+      and column_name not in ('id', 'nombre', 'usuario', 'tipo', 'created_at')
+  loop
+    execute format(
+      'alter table public.establecimientos alter column %I drop not null',
+      col.column_name
+    );
+  end loop;
 end $$;
 
 update public.establecimientos
@@ -678,219 +685,135 @@ on conflict (clave) do update set
   rango_contaminado_min = excluded.rango_contaminado_min,
   orden = excluded.orden;
 
--- Migra el registro previo de INSUCO ABG (si existe) para conservar sus mediciones
-update public.establecimientos
-set
-  nombre = 'Instituto Comercial Bicentenario de Viña del Mar',
-  usuario = 'adminabg',
-  password_hash = extensions.crypt('comeducabg.cl2026', extensions.gen_salt('bf')),
-  usuario_manipulador = 'insucoalbertoblestgana',
-  password_manipulador_hash = extensions.crypt('comeducABG', extensions.gen_salt('bf'))
-where id = (
-  select e.id
+-- Seed oficial idempotente: 19 liceos de la Red Educacional Comeduc
+do $$
+declare
+  rec record;
+  v_target_id uuid;
+  v_dup_id uuid;
+begin
+  -- Migra registro previo de INSUCO ABG si existía con usuario anterior
+  select e.id into v_target_id
   from public.establecimientos e
-  where e.usuario in ('institutodecomercioinsucoabg', 'insucoadministracion')
-  order by e.created_at asc
-  limit 1
-)
-and not exists (
-  select 1 from public.establecimientos
-  where usuario = 'adminabg' or usuario_manipulador = 'insucoalbertoblestgana'
-);
+  where e.usuario in ('adminabg', 'institutodecomercioinsucoabg', 'insucoadministracion')
+     or e.usuario_manipulador in ('insucoalbertoblestgana', 'insucoalimentos')
+  order by
+    case
+      when e.usuario = 'adminabg' then 0
+      when e.usuario_manipulador = 'insucoalbertoblestgana' then 1
+      else 2
+    end,
+    e.created_at asc
+  limit 1;
 
--- Limpia registros de prueba antiguos sin mediciones asociadas
-delete from public.establecimientos e
-where e.usuario in ('institutodecomercioinsucoabg', 'insucoadministracion', 'comeducadministracion')
-  and not exists (
-    select 1 from public.mediciones m where m.establecimiento_id = e.id
-  );
+  if v_target_id is not null then
+    for v_dup_id in
+      select e.id
+      from public.establecimientos e
+      where e.id <> v_target_id
+        and (
+          e.usuario in ('adminabg', 'institutodecomercioinsucoabg', 'insucoadministracion')
+          or e.usuario_manipulador in ('insucoalbertoblestgana', 'insucoalimentos')
+        )
+    loop
+      update public.mediciones set establecimiento_id = v_target_id where establecimiento_id = v_dup_id;
+      delete from public.establecimiento_sesiones where establecimiento_id = v_dup_id;
+      delete from public.establecimientos where id = v_dup_id;
+    end loop;
 
--- Seed oficial: 19 liceos de la Red Educacional Comeduc (Web Admin + App Manipuladores)
-insert into public.establecimientos (
-  nombre,
-  usuario,
-  password_hash,
-  usuario_manipulador,
-  password_manipulador_hash,
-  correo_contacto,
-  tipo
-) values
-  (
-    'Instituto Comercial Bicentenario de Viña del Mar',
-    'adminabg',
-    extensions.crypt('comeducabg.cl2026', extensions.gen_salt('bf')),
-    'insucoalbertoblestgana',
-    extensions.crypt('comeducABG', extensions.gen_salt('bf')),
-    null,
-    'establecimiento'
-  ),
-  (
-    'Liceo Comercial Luis Correa Prieto',
-    'adminlcp',
-    extensions.crypt('comeduclcp.cl2026', extensions.gen_salt('bf')),
-    'lcluiscorreapietro',
-    extensions.crypt('comeducLCP', extensions.gen_salt('bf')),
-    null,
-    'establecimiento'
-  ),
-  (
-    'Instituto Tecnológico y Comercial Recoleta',
-    'adminrecoleta',
-    extensions.crypt('comeducrecoleta.cl2026', extensions.gen_salt('bf')),
-    'intecorecoleta',
-    extensions.crypt('comeducRECOLETA', extensions.gen_salt('bf')),
-    null,
-    'establecimiento'
-  ),
-  (
-    'Colegio Técnico Profesional Achiga-Comeduc',
-    'adminachiga',
-    extensions.crypt('comeducachiga.cl2026', extensions.gen_salt('bf')),
-    'ctachiga',
-    extensions.crypt('comeducACHIGA', extensions.gen_salt('bf')),
-    null,
-    'establecimiento'
-  ),
-  (
-    'Liceo Técnico Clelia Clavel Dinator',
-    'admincleviaclavel',
-    extensions.crypt('comeduccleliaclavel.cl2026', extensions.gen_salt('bf')),
-    'ltcleviaclavel',
-    extensions.crypt('comeducCLELIACLAVEL', extensions.gen_salt('bf')),
-    null,
-    'establecimiento'
-  ),
-  (
-    'Liceo Bicentenario Joaquín Vera Morales Insuco2',
-    'adminjvm',
-    extensions.crypt('comeducjvm.cl2026', extensions.gen_salt('bf')),
-    'insucojoaquinveramorales',
-    extensions.crypt('comeducJVM', extensions.gen_salt('bf')),
-    null,
-    'establecimiento'
-  ),
-  (
-    'Liceo Técnico José María Narbona Cortés',
-    'adminjmnc',
-    extensions.crypt('comeducjmnc.cl2026', extensions.gen_salt('bf')),
-    'ltjosemarianarbonacortes',
-    extensions.crypt('comeducJMNC', extensions.gen_salt('bf')),
-    null,
-    'establecimiento'
-  ),
-  (
-    'Liceo Comercial Gabriel González Videla',
-    'adminggv',
-    extensions.crypt('comeducggv.cl2026', extensions.gen_salt('bf')),
-    'lcgabrielgonzalezvidela',
-    extensions.crypt('comeducGGV', extensions.gen_salt('bf')),
-    null,
-    'establecimiento'
-  ),
-  (
-    'Liceo Bicentenario Comercial Molina Lavín',
-    'adminml',
-    extensions.crypt('comeducml.cl2026', extensions.gen_salt('bf')),
-    'lcmolinalavin',
-    extensions.crypt('comeducML', extensions.gen_salt('bf')),
-    null,
-    'establecimiento'
-  ),
-  (
-    'Liceo Comercial Vate Vicente Huidobro',
-    'adminvvh',
-    extensions.crypt('comeducvvh.cl2026', extensions.gen_salt('bf')),
-    'lcvatevicentehuidobro',
-    extensions.crypt('comeducVVH', extensions.gen_salt('bf')),
-    null,
-    'establecimiento'
-  ),
-  (
-    'Instituto Comercial Padre Alberto Hurtado',
-    'adminpah',
-    extensions.crypt('comeducpah.cl2026', extensions.gen_salt('bf')),
-    'lcpadrealbertohurtado',
-    extensions.crypt('comeducPAH', extensions.gen_salt('bf')),
-    null,
-    'establecimiento'
-  ),
-  (
-    'Liceo Técnico Clotario Blest Riffo',
-    'admincbr',
-    extensions.crypt('comeduccbr.cl2026', extensions.gen_salt('bf')),
-    'ltclotarioblestriffo',
-    extensions.crypt('comeducCBR', extensions.gen_salt('bf')),
-    null,
-    'establecimiento'
-  ),
-  (
-    'Liceo Comercial de San Bernardo',
-    'adminsanbernardo',
-    extensions.crypt('comeducsanbernardo.cl2026', extensions.gen_salt('bf')),
-    'lcsanbernardo',
-    extensions.crypt('comeducSANBERNARDO', extensions.gen_salt('bf')),
-    null,
-    'establecimiento'
-  ),
-  (
-    'Colegio Comercial de Peñaflor',
-    'adminpeñaflor',
-    extensions.crypt('comeducpeñaflor.cl2026', extensions.gen_salt('bf')),
-    'ccpeñaflor',
-    extensions.crypt('comeducPEÑAFLOR', extensions.gen_salt('bf')),
-    null,
-    'establecimiento'
-  ),
-  (
-    'Liceo Bicentenario Técnico de Rancagua',
-    'adminrancagua',
-    extensions.crypt('comeducrancagua.cl2026', extensions.gen_salt('bf')),
-    'ltrancagua',
-    extensions.crypt('comeducRANCAGUA', extensions.gen_salt('bf')),
-    null,
-    'establecimiento'
-  ),
-  (
-    'Liceo Técnico Bicentenario Felisa Tolup',
-    'adminft',
-    extensions.crypt('comeducft.cl2026', extensions.gen_salt('bf')),
-    'ltfelisatolup',
-    extensions.crypt('comeducFT', extensions.gen_salt('bf')),
-    null,
-    'establecimiento'
-  ),
-  (
-    'Instituto Politécnico Bicentenario Juan Terrier Dailly',
-    'adminjtd',
-    extensions.crypt('comeducjtd.cl2026', extensions.gen_salt('bf')),
-    'lpjuanterrierdailly',
-    extensions.crypt('comeducJTD', extensions.gen_salt('bf')),
-    null,
-    'establecimiento'
-  ),
-  (
-    'Liceo Bicentenario de Excelencia INSUCO Chillán',
-    'adminchillan',
-    extensions.crypt('comeducchillan.cl2026', extensions.gen_salt('bf')),
-    'insucochillan',
-    extensions.crypt('comeducCHILLAN', extensions.gen_salt('bf')),
-    null,
-    'establecimiento'
-  ),
-  (
-    'Instituto Técnico Mabel Condemarín Grimberg',
-    'adminmcg',
-    extensions.crypt('comeducmcg.cl2026', extensions.gen_salt('bf')),
-    'ltmabelcondemaringrimberg',
-    extensions.crypt('comeducMCG', extensions.gen_salt('bf')),
-    null,
-    'establecimiento'
-  )
-on conflict (usuario) do update set
-  nombre = excluded.nombre,
-  password_hash = excluded.password_hash,
-  usuario_manipulador = excluded.usuario_manipulador,
-  password_manipulador_hash = excluded.password_manipulador_hash;
+    update public.establecimientos
+    set
+      nombre = 'Instituto Comercial Bicentenario de Viña del Mar',
+      usuario = 'adminabg',
+      password_hash = extensions.crypt('comeducabg.cl2026', extensions.gen_salt('bf')),
+      usuario_manipulador = 'insucoalbertoblestgana',
+      password_manipulador_hash = extensions.crypt('comeducABG', extensions.gen_salt('bf'))
+    where id = v_target_id;
+  end if;
+
+  -- Limpia registro de prueba genérico sin mediciones
+  delete from public.establecimientos e
+  where e.usuario = 'comeducadministracion'
+    and not exists (
+      select 1 from public.mediciones m where m.establecimiento_id = e.id
+    );
+
+  for rec in
+    select *
+    from (
+      values
+        ('Instituto Comercial Bicentenario de Viña del Mar', 'adminabg', 'comeducabg.cl2026', 'insucoalbertoblestgana', 'comeducABG'),
+        ('Liceo Comercial Luis Correa Prieto', 'adminlcp', 'comeduclcp.cl2026', 'lcluiscorreapietro', 'comeducLCP'),
+        ('Instituto Tecnológico y Comercial Recoleta', 'adminrecoleta', 'comeducrecoleta.cl2026', 'intecorecoleta', 'comeducRECOLETA'),
+        ('Colegio Técnico Profesional Achiga-Comeduc', 'adminachiga', 'comeducachiga.cl2026', 'ctachiga', 'comeducACHIGA'),
+        ('Liceo Técnico Clelia Clavel Dinator', 'admincleviaclavel', 'comeduccleliaclavel.cl2026', 'ltcleviaclavel', 'comeducCLELIACLAVEL'),
+        ('Liceo Bicentenario Joaquín Vera Morales Insuco2', 'adminjvm', 'comeducjvm.cl2026', 'insucojoaquinveramorales', 'comeducJVM'),
+        ('Liceo Técnico José María Narbona Cortés', 'adminjmnc', 'comeducjmnc.cl2026', 'ltjosemarianarbonacortes', 'comeducJMNC'),
+        ('Liceo Comercial Gabriel González Videla', 'adminggv', 'comeducggv.cl2026', 'lcgabrielgonzalezvidela', 'comeducGGV'),
+        ('Liceo Bicentenario Comercial Molina Lavín', 'adminml', 'comeducml.cl2026', 'lcmolinalavin', 'comeducML'),
+        ('Liceo Comercial Vate Vicente Huidobro', 'adminvvh', 'comeducvvh.cl2026', 'lcvatevicentehuidobro', 'comeducVVH'),
+        ('Instituto Comercial Padre Alberto Hurtado', 'adminpah', 'comeducpah.cl2026', 'lcpadrealbertohurtado', 'comeducPAH'),
+        ('Liceo Técnico Clotario Blest Riffo', 'admincbr', 'comeduccbr.cl2026', 'ltclotarioblestriffo', 'comeducCBR'),
+        ('Liceo Comercial de San Bernardo', 'adminsanbernardo', 'comeducsanbernardo.cl2026', 'lcsanbernardo', 'comeducSANBERNARDO'),
+        ('Colegio Comercial de Peñaflor', 'adminpeñaflor', 'comeducpeñaflor.cl2026', 'ccpeñaflor', 'comeducPEÑAFLOR'),
+        ('Liceo Bicentenario Técnico de Rancagua', 'adminrancagua', 'comeducrancagua.cl2026', 'ltrancagua', 'comeducRANCAGUA'),
+        ('Liceo Técnico Bicentenario Felisa Tolup', 'adminft', 'comeducft.cl2026', 'ltfelisatolup', 'comeducFT'),
+        ('Instituto Politécnico Bicentenario Juan Terrier Dailly', 'adminjtd', 'comeducjtd.cl2026', 'lpjuanterrierdailly', 'comeducJTD'),
+        ('Liceo Bicentenario de Excelencia INSUCO Chillán', 'adminchillan', 'comeducchillan.cl2026', 'insucochillan', 'comeducCHILLAN'),
+        ('Instituto Técnico Mabel Condemarín Grimberg', 'adminmcg', 'comeducmcg.cl2026', 'ltmabelcondemaringrimberg', 'comeducMCG')
+    ) as t(nombre, usuario, pass_web, usuario_manip, pass_app)
+  loop
+    select e.id into v_target_id
+    from public.establecimientos e
+    where e.usuario = rec.usuario
+       or e.usuario_manipulador = rec.usuario_manip
+    order by
+      case when e.usuario = rec.usuario then 0 else 1 end,
+      e.created_at asc
+    limit 1;
+
+    if v_target_id is not null then
+      for v_dup_id in
+        select e.id
+        from public.establecimientos e
+        where e.id <> v_target_id
+          and (e.usuario = rec.usuario or e.usuario_manipulador = rec.usuario_manip)
+      loop
+        update public.mediciones set establecimiento_id = v_target_id where establecimiento_id = v_dup_id;
+        delete from public.establecimiento_sesiones where establecimiento_id = v_dup_id;
+        delete from public.establecimientos where id = v_dup_id;
+      end loop;
+
+      update public.establecimientos
+      set
+        nombre = rec.nombre,
+        usuario = rec.usuario,
+        password_hash = extensions.crypt(rec.pass_web, extensions.gen_salt('bf')),
+        usuario_manipulador = rec.usuario_manip,
+        password_manipulador_hash = extensions.crypt(rec.pass_app, extensions.gen_salt('bf')),
+        tipo = 'establecimiento'
+      where id = v_target_id;
+    else
+      insert into public.establecimientos (
+        nombre,
+        usuario,
+        password_hash,
+        usuario_manipulador,
+        password_manipulador_hash,
+        correo_contacto,
+        tipo
+      ) values (
+        rec.nombre,
+        rec.usuario,
+        extensions.crypt(rec.pass_web, extensions.gen_salt('bf')),
+        rec.usuario_manip,
+        extensions.crypt(rec.pass_app, extensions.gen_salt('bf')),
+        null,
+        'establecimiento'
+      );
+    end if;
+  end loop;
+end $$;
 
 notify pgrst, 'reload schema';
 
