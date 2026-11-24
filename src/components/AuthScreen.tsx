@@ -2,6 +2,7 @@ import React, {useState} from 'react';
 import {AlertCircle, ArrowLeft, Eye, EyeOff} from 'lucide-react';
 import {isSupabaseConfigured, signInEstablishment} from '../lib/supabase';
 import type {EstablishmentProfile} from '../types/meep';
+import {MeepLogo} from './MeepIcons';
 import {PWAInstallButton} from './PWAInstallButton';
 
 interface AuthScreenProps {
@@ -62,6 +63,9 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
         className="w-full max-w-[430px] rounded-[24px] border border-[#DDE2DC] bg-[#F7F7F2] shadow-[0_14px_40px_rgba(23,50,77,0.12)] overflow-hidden"
       >
         <header className="bg-[#17324D] text-white text-center px-5 py-7">
+          <div className="flex justify-center mb-3">
+            <MeepLogo size={54} className="border-white/25 shadow-sm" />
+          </div>
           <strong className="font-display text-sm tracking-[0.16em]">
             MEEP · APP DE MEDICIÓN
           </strong>

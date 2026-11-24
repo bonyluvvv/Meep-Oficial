@@ -1,26 +1,16 @@
 import React from 'react';
 
-export const MeepLogo: React.FC<{size?: number}> = ({size = 34}) => (
-  <svg
+export const MeepLogo: React.FC<{size?: number; className?: string}> = ({
+  size = 34,
+  className = '',
+}) => (
+  <img
+    src={`${import.meta.env.BASE_URL}meep-icon.png`}
+    alt="MEEP"
     width={size}
     height={size}
-    viewBox="0 0 40 40"
-    aria-hidden="true"
-    className="shrink-0"
-  >
-    <rect width="40" height="40" rx="12" fill="#2A9D8F" />
-    <path
-      d="M20 7C16.5 13 12.5 16.5 12.5 21.5a7.5 7.5 0 0 0 15 0C27.5 16.5 23.5 13 20 7z"
-      fill="#F7F7F2"
-    />
-    <path
-      d="M20 21v8"
-      stroke="#17324D"
-      strokeWidth="2.6"
-      strokeLinecap="round"
-    />
-    <circle cx="20" cy="21" r="2" fill="#17324D" />
-  </svg>
+    className={`shrink-0 rounded-[22%] object-cover border border-[#E1E3DA]/80 ${className}`}
+  />
 );
 
 export const FoodIcon: React.FC<{clave: string; size?: number}> = ({
