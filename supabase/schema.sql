@@ -41,6 +41,12 @@ alter table if exists public.establecimientos
   alter column id set default gen_random_uuid();
 
 alter table if exists public.establecimientos
+  add column if not exists nombre text;
+
+alter table if exists public.establecimientos
+  add column if not exists usuario text;
+
+alter table if exists public.establecimientos
   add column if not exists password_hash text;
 
 alter table if exists public.establecimientos
@@ -48,6 +54,54 @@ alter table if exists public.establecimientos
 
 alter table if exists public.establecimientos
   add column if not exists password_manipulador_hash text;
+
+alter table if exists public.establecimientos
+  add column if not exists correo_contacto text;
+
+alter table if exists public.establecimientos
+  add column if not exists tipo text not null default 'establecimiento';
+
+alter table if exists public.establecimientos
+  add column if not exists created_at timestamptz not null default now();
+
+do $$
+begin
+  if exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public'
+      and table_name = 'establecimientos'
+      and column_name = 'email'
+  ) then
+    execute 'alter table public.establecimientos alter column email drop not null';
+  end if;
+end $$;
+
+update public.establecimientos
+set nombre = 'Establecimiento MEEP'
+where nombre is null or char_length(trim(nombre)) < 2;
+
+update public.establecimientos
+set usuario = lower(regexp_replace(trim(usuario), '[^a-zA-ZñÑ0-9._-]', '', 'g'))
+where usuario is not null;
+
+update public.establecimientos
+set usuario = 'estab_' || substr(replace(id::text, '-', ''), 1, 12)
+where usuario is null or usuario !~ '^[a-zñ0-9._-]{3,50}$';
+
+update public.establecimientos
+set usuario_manipulador = lower(regexp_replace(trim(usuario_manipulador), '[^a-zA-ZñÑ0-9._-]', '', 'g'))
+where usuario_manipulador is not null;
+
+update public.establecimientos
+set usuario_manipulador = null
+where usuario_manipulador is not null
+  and usuario_manipulador !~ '^[a-zñ0-9._-]{3,50}$';
+
+alter table if exists public.establecimientos
+  alter column nombre set not null;
+
+alter table if exists public.establecimientos
+  alter column usuario set not null;
 
 alter table if exists public.establecimientos
   drop constraint if exists establecimientos_usuario_check;
@@ -73,8 +127,30 @@ alter table if exists public.establecimientos
 do $$
 begin
   if not exists (
-    select 1 from pg_constraint
-    where conname = 'establecimientos_usuario_manipulador_key'
+    select 1
+    from pg_constraint c
+    join pg_attribute a
+      on a.attrelid = c.conrelid
+     and a.attnum = any(c.conkey)
+    where c.conrelid = 'public.establecimientos'::regclass
+      and c.contype in ('u', 'p')
+      and array_length(c.conkey, 1) = 1
+      and a.attname = 'usuario'
+  ) then
+    alter table public.establecimientos
+      add constraint establecimientos_usuario_key unique (usuario);
+  end if;
+
+  if not exists (
+    select 1
+    from pg_constraint c
+    join pg_attribute a
+      on a.attrelid = c.conrelid
+     and a.attnum = any(c.conkey)
+    where c.conrelid = 'public.establecimientos'::regclass
+      and c.contype in ('u', 'p')
+      and array_length(c.conkey, 1) = 1
+      and a.attname = 'usuario_manipulador'
   ) then
     alter table public.establecimientos
       add constraint establecimientos_usuario_manipulador_key unique (usuario_manipulador);
@@ -154,6 +230,23 @@ create table if not exists public.alimentos (
   orden int not null default 0
 );
 
+alter table if exists public.alimentos
+  add column if not exists icono text not null default 'leche';
+alter table if exists public.alimentos
+  add column if not exists ph_min numeric(4,2);
+alter table if exists public.alimentos
+  add column if not exists ph_max numeric(4,2);
+alter table if exists public.alimentos
+  add column if not exists rango_acido_max numeric(4,2);
+alter table if exists public.alimentos
+  add column if not exists rango_contaminado_min numeric(4,2);
+alter table if exists public.alimentos
+  add column if not exists validado boolean not null default false;
+alter table if exists public.alimentos
+  add column if not exists activo boolean not null default true;
+alter table if exists public.alimentos
+  add column if not exists orden int not null default 0;
+
 create table if not exists public.mediciones (
   id uuid primary key default gen_random_uuid(),
   establecimiento_id uuid not null references public.establecimientos(id) on delete cascade,
@@ -172,6 +265,25 @@ create table if not exists public.mediciones (
   medido_at timestamptz not null default now(),
   created_at timestamptz not null default now()
 );
+
+alter table if exists public.mediciones
+  add column if not exists temperatura numeric(5,2);
+alter table if exists public.mediciones
+  add column if not exists subestado text not null default 'no_interpretable';
+alter table if exists public.mediciones
+  add column if not exists led_color text not null default 'apagado';
+alter table if exists public.mediciones
+  add column if not exists motivo text;
+alter table if exists public.mediciones
+  add column if not exists manipulador text;
+alter table if exists public.mediciones
+  add column if not exists dispositivo_codigo text;
+alter table if exists public.mediciones
+  add column if not exists origen text not null default 'bluetooth';
+alter table if exists public.mediciones
+  add column if not exists medido_at timestamptz not null default now();
+alter table if exists public.mediciones
+  add column if not exists created_at timestamptz not null default now();
 
 create index if not exists idx_mediciones_estab_fecha
   on public.mediciones (establecimiento_id, medido_at desc);
@@ -327,9 +439,28 @@ begin
     return null;
   end if;
 
-  select e.*, s.rol into v_est.id, v_est.nombre, v_est.usuario, v_est.password_hash,
-    v_est.usuario_manipulador, v_est.password_manipulador_hash,
-    v_est.correo_contacto, v_est.tipo, v_est.created_at, v_rol
+  select
+    e.id,
+    e.nombre,
+    e.usuario,
+    e.password_hash,
+    e.usuario_manipulador,
+    e.password_manipulador_hash,
+    e.correo_contacto,
+    e.tipo,
+    e.created_at,
+    s.rol
+  into
+    v_est.id,
+    v_est.nombre,
+    v_est.usuario,
+    v_est.password_hash,
+    v_est.usuario_manipulador,
+    v_est.password_manipulador_hash,
+    v_est.correo_contacto,
+    v_est.tipo,
+    v_est.created_at,
+    v_rol
   from public.establecimiento_sesiones s
   join public.establecimientos e on e.id = s.establecimiento_id
   where s.token = p_token
