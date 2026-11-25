@@ -1,14 +1,3 @@
--- ============================================================================
--- MEEP / PROYECTO PEMI (RED EDUCACIONAL COMEDUC) - ESQUEMA SUPABASE
--- ============================================================================
--- Modelo de acceso por institución:
---   1) Administrador (Página Web - solo consulta): usuario + clave admin
---   2) Manipuladores (App MEEP - medir por Bluetooth): usuario_manipulador + clave
---   3) Solicitudes de integración (formulario web): tabla solicitudes_integracion
---
--- Ejecuta este script completo en: Supabase -> SQL Editor -> New query -> Run.
--- ============================================================================
-
 create extension if not exists pgcrypto with schema extensions;
 
 create table if not exists public.establecimientos (
